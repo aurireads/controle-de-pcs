@@ -13,37 +13,90 @@ export default function KpopCollection() {
   // Estados do Modal
   const [editingCard, setEditingCard] = useState(null);
   const [tempDescription, setTempDescription] = useState('');
+  const [moveToStatus, setMoveToStatus] = useState('');
+  const [moveToGroup, setMoveToGroup] = useState('');
+  const [moveToMember, setMoveToMember] = useState('');
 
   useEffect(() => {
-    fetchData();
+    fetchGroups();
   }, []);
 
-  async function fetchData() {
-    // Busca grupos
-    const { data: groups } = await supabase.from('groups').select('*, members(*)');
+  useEffect(() => {
+    fetchCollection();
+  }, [currentTab, selectedGroup, selectedMember]);
+
+  async function fetchGroups() {
+    const { data: groups, error: groupsError } = await supabase.from('groups').select('*, members(*)');
+    console.log('Groups:', groups, 'Error:', groupsError);
     const groupsObj = {};
     groups?.forEach(g => {
       groupsObj[g.name] = g.members.map(m => m.name);
     });
     setGroupsData(groupsObj);
+  }
 
-    // Busca coleção
-    const { data: collection } = await supabase
-      .from('collection')
-      .select(`*, members (name, groups (name))`)
-      .order('created_at', { ascending: false });
+  async function fetchCollection() {
+    setLoading(true);
+    
+    // Se tiver grupo selecionado, busca pelo member_id
+    if (selectedMember && selectedGroup) {
+      // Primeiro busca o member_id
+      const { data: memberData } = await supabase
+        .from('members')
+        .select('id, groups!inner(name)')
+        .eq('name', selectedMember)
+        .eq('groups.name', selectedGroup)
+        .single();
+      
+      if (memberData) {
+        const { data: collection, error: collectionError } = await supabase
+          .from('collection')
+          .select(`*, members (name, groups (name))`)
+          .eq('status', currentTab)
+          .eq('member_id', memberData.id)
+          .order('image_url', { ascending: false, nullsFirst: false })
+          .order('created_at', { ascending: true })
+          .limit(5000);
+        
+        console.log('Collection (filtrada por membro):', collection?.length, 'Error:', collectionError);
+        
+        if (collection) {
+          const formatted = collection.map(item => ({
+            id: item.id,
+            status: item.status,
+            img: item.image_url,
+            description: item.description,
+            member: item.members?.name,
+            group: item.members?.groups?.name
+          }));
+          setCards(formatted);
+        }
+      }
+    } else {
+      // Busca geral com limite
+      const { data: collection, error: collectionError } = await supabase
+        .from('collection')
+        .select(`*, members (name, groups (name))`)
+        .eq('status', currentTab)
+        .order('created_at', { ascending: false })
+        .limit(1000);
+      
+      console.log('Collection:', collection?.length, 'Error:', collectionError);
 
-    if (collection) {
-      const formatted = collection.map(item => ({
-        id: item.id,
-        status: item.status,
-        img: item.image_url,
-        description: item.description,
-        member: item.members?.name,
-        group: item.members?.groups?.name
-      }));
-      setCards(formatted);
+      if (collection) {
+        const formatted = collection.map(item => ({
+          id: item.id,
+          status: item.status,
+          img: item.image_url,
+          description: item.description,
+          member: item.members?.name,
+          group: item.members?.groups?.name
+        }));
+        console.log('Grupos únicos nos cards:', [...new Set(formatted.map(c => c.group))]);
+        setCards(formatted);
+      }
     }
+    setLoading(false);
   }
 
   // --- FUNÇÃO DE UPLOAD ---
@@ -149,39 +202,75 @@ export default function KpopCollection() {
 
   // --- FUNÇÃO 5: MOVER CARD DE STATUS ---
   async function handleMoveStatus() {
-    if (!editingCard) return;
-
-    let nextStatus = '';
-    let confirmMessage = '';
-
-    // Define para onde o card vai
-    if (editingCard.status === 'wishlist') {
-      nextStatus = 'on_the_way';
-      confirmMessage = "Oba! Comprou o card? Vou mover para 'A Caminho'.";
-    } else if (editingCard.status === 'on_the_way') {
-      nextStatus = 'owned';
-      confirmMessage = "Chegou? Parabéns! Vou mover para 'Minha Coleção'.";
-    } else {
-      return; // Se já estiver em 'owned', não faz nada
+    if (!editingCard || !moveToStatus) return;
+    if (moveToStatus === editingCard.status) {
+      alert('O card já está nesse status!');
+      return;
     }
 
-    if (!window.confirm(confirmMessage)) return;
+    const statusNames = {
+      wishlist: 'Wishlist',
+      on_the_way: 'A Caminho',
+      owned: 'Minha Coleção',
+      ceg: 'CEG'
+    };
+
+    if (!window.confirm(`Mover para "${statusNames[moveToStatus]}"?`)) return;
 
     try {
-      // 1. Atualiza no Banco
       const { error } = await supabase
         .from('collection')
-        .update({ status: nextStatus })
+        .update({ status: moveToStatus })
         .eq('id', editingCard.id);
 
       if (error) throw error;
 
-      // 2. Atualiza na Tela (O card vai sumir da aba atual)
-      setCards(prev => prev.map(c =>
-        c.id === editingCard.id ? { ...c, status: nextStatus } : c
-      ));
+      setCards(prev => prev.filter(c => c.id !== editingCard.id));
+      setEditingCard(null);
+      setMoveToStatus('');
 
-      setEditingCard(null); // Fecha a janela
+    } catch (error) {
+      console.error(error);
+      alert("Erro ao mover o card.");
+    }
+  }
+
+  // --- FUNÇÃO 6: MOVER CARD PARA OUTRO MEMBRO ---
+  async function handleMoveMember() {
+    if (!editingCard || !moveToGroup || !moveToMember) return;
+
+    // Busca o member_id do membro selecionado
+    const { data: memberData } = await supabase
+      .from('members')
+      .select('id, groups!inner(name)')
+      .eq('name', moveToMember)
+      .eq('groups.name', moveToGroup)
+      .single();
+
+    if (!memberData) {
+      alert('Membro não encontrado!');
+      return;
+    }
+
+    if (!window.confirm(`Mover para ${moveToMember} (${moveToGroup})?`)) return;
+
+    try {
+      const { error } = await supabase
+        .from('collection')
+        .update({ member_id: memberData.id })
+        .eq('id', editingCard.id);
+
+      if (error) throw error;
+
+      // Atualiza na tela
+      setCards(prev => prev.map(c =>
+        c.id === editingCard.id ? { ...c, member: moveToMember, group: moveToGroup } : c
+      ));
+      
+      setEditingCard(null);
+      setMoveToGroup('');
+      setMoveToMember('');
+      alert('Card movido com sucesso!');
 
     } catch (error) {
       console.error(error);
@@ -192,22 +281,32 @@ export default function KpopCollection() {
   function openEditModal(card) {
     setEditingCard(card);
     setTempDescription(card.description || '');
+    setMoveToStatus('');
+    setMoveToGroup('');
+    setMoveToMember('');
   }
 
   const filteredCards = cards.filter(card => {
-    const matchTab = card.status === currentTab;
     const matchGroup = selectedGroup ? card.group === selectedGroup : true;
     const matchMember = selectedMember ? card.member === selectedMember : true;
-    return matchTab && matchGroup && matchMember;
+    return matchGroup && matchMember;
   });
+
+  // Debug: ver grupos e membros únicos nos cards
+  useEffect(() => {
+    if (cards.length > 0) {
+      console.log('Grupos únicos nos cards:', [...new Set(cards.map(c => c.group))]);
+      console.log('Membros únicos nos cards:', [...new Set(cards.map(c => c.member))].slice(0, 20));
+    }
+  }, [cards]);
 
   return (
     <div className="min-h-screen bg-gray-50 p-8 font-sans">
       {/* Abas */}
       <div className="flex justify-center space-x-8 mb-10 border-b border-gray-200 pb-4">
-        {['wishlist', 'on_the_way', 'owned'].map((tab) => (
+        {['wishlist', 'on_the_way', 'owned', 'ceg'].map((tab) => (
           <button key={tab} onClick={() => setCurrentTab(tab)} className={`text-lg font-medium capitalize pb-2 transition-colors ${currentTab === tab ? 'text-purple-600 border-b-2 border-purple-600' : 'text-gray-400 hover:text-gray-600'}`}>
-            {tab.replace(/_/g, ' ')}
+            {tab.replace(/_/g, ' ').toUpperCase()}
           </button>
         ))}
       </div>
@@ -284,8 +383,7 @@ export default function KpopCollection() {
               </div>
 
               {/* BOTOES DE AÇÃO */}
-              {/* BOTOES DE AÇÃO */}
-              <div className="flex gap-2">
+              <div className="flex gap-2 flex-wrap">
                 <button
                   onClick={handleDeletePhoto}
                   className="bg-red-100 text-red-600 p-2 rounded-lg hover:bg-red-200 transition-colors"
@@ -294,19 +392,30 @@ export default function KpopCollection() {
                   <Trash2 size={20} />
                 </button>
 
-                {/* Só mostra o botão MOVER se NÃO estiver na aba Owned */}
-                {editingCard.status !== 'owned' && (
+                {/* Seletor de status para mover */}
+                <select
+                  value={moveToStatus}
+                  onChange={(e) => setMoveToStatus(e.target.value)}
+                  className="border border-gray-300 rounded-lg px-2 py-1 text-sm focus:outline-none focus:border-blue-500"
+                >
+                  <option value="">Mover para...</option>
+                  <option value="wishlist">Wishlist</option>
+                  <option value="on_the_way">A Caminho</option>
+                  <option value="owned">Minha Coleção</option>
+                  <option value="ceg">CEG</option>
+                </select>
+
+                {moveToStatus && (
                   <button
                     onClick={handleMoveStatus}
                     className="bg-blue-100 text-blue-600 p-2 rounded-lg hover:bg-blue-200 transition-colors flex items-center gap-1"
-                    title="Avançar para próxima etapa"
+                    title="Confirmar movimento"
                   >
-                    <span className="text-xs font-bold uppercase">Mover</span>
                     <ArrowRight size={20} />
                   </button>
                 )}
 
-                {/* Botão de SALVAR (Apenas um agora) */}
+                {/* Botão de SALVAR */}
                 <button
                   onClick={saveDescription}
                   className="flex-1 bg-purple-600 text-white py-2 rounded-lg font-medium hover:bg-purple-700 flex items-center justify-center gap-2"
@@ -314,6 +423,41 @@ export default function KpopCollection() {
                   <Save size={18} />
                   Salvar
                 </button>
+              </div>
+
+              {/* MOVER PARA OUTRO MEMBRO */}
+              <div className="border-t pt-3 mt-2">
+                <label className="block text-xs font-bold text-gray-500 uppercase mb-2">Mover para outro membro</label>
+                <div className="flex gap-2 flex-wrap">
+                  <select
+                    value={moveToGroup}
+                    onChange={(e) => { setMoveToGroup(e.target.value); setMoveToMember(''); }}
+                    className="border border-gray-300 rounded-lg px-2 py-1 text-sm focus:outline-none focus:border-green-500 flex-1"
+                  >
+                    <option value="">Grupo...</option>
+                    {Object.keys(groupsData).map(g => <option key={g} value={g}>{g}</option>)}
+                  </select>
+
+                  <select
+                    value={moveToMember}
+                    onChange={(e) => setMoveToMember(e.target.value)}
+                    disabled={!moveToGroup}
+                    className="border border-gray-300 rounded-lg px-2 py-1 text-sm focus:outline-none focus:border-green-500 flex-1 disabled:opacity-50"
+                  >
+                    <option value="">Membro...</option>
+                    {moveToGroup && groupsData[moveToGroup]?.map(m => <option key={m} value={m}>{m}</option>)}
+                  </select>
+
+                  {moveToMember && (
+                    <button
+                      onClick={handleMoveMember}
+                      className="bg-green-100 text-green-600 p-2 rounded-lg hover:bg-green-200 transition-colors flex items-center gap-1"
+                      title="Confirmar movimento"
+                    >
+                      <ArrowRight size={20} />
+                    </button>
+                  )}
+                </div>
               </div>
             </div>
           </div>
