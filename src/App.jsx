@@ -26,7 +26,9 @@ export default function KpopCollection() {
   }, [currentTab, selectedGroup, selectedMember]);
 
   async function fetchGroups() {
-    const { data: groups, error: groupsError } = await supabase.from('groups').select('*, members(*)');
+    const { data: groups, error: groupsError } = await supabase
+      .from('groups')
+      .select('id, name, members(id, name)');
     console.log('Groups:', groups, 'Error:', groupsError);
     const groupsObj = {};
     groups?.forEach(g => {
