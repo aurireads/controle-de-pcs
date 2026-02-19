@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { supabase } from './supabase';
-import { Camera, ChevronDown, X, Trash2, ArrowRight } from 'lucide-react';
+import { Camera, ChevronDown, X, Trash2, ArrowRight, Heart } from 'lucide-react';
 
 export default function KpopCollection() {
   const [currentTab, setCurrentTab] = useState('wishlist');
@@ -49,14 +49,16 @@ export default function KpopCollection() {
         .single();
       
       if (memberData) {
-        const { data: collection } = await supabase
+        let query = supabase
           .from('collection')
           .select(`*, members (name, groups (name))`)
-          .eq('status', currentTab)
           .eq('member_id', memberData.id)
+          .eq('status', currentTab)
           .order('image_url', { ascending: false, nullsFirst: false })
           .order('created_at', { ascending: true })
           .limit(5000);
+        
+        const { data: collection } = await query;
         
         if (collection) {
           const formatted = collection.map(item => ({
@@ -65,18 +67,21 @@ export default function KpopCollection() {
             img: item.image_url,
             description: item.description,
             member: item.members?.name,
-            group: item.members?.groups?.name
+            group: item.members?.groups?.name,
+            isFavorite: item.is_favorite
           }));
           setCards(formatted);
         }
       }
     } else {
-      const { data: collection } = await supabase
+      let query = supabase
         .from('collection')
         .select(`*, members (name, groups (name))`)
         .eq('status', currentTab)
         .order('created_at', { ascending: false })
         .limit(1000);
+      
+      const { data: collection } = await query;
       
       if (collection) {
         const formatted = collection.map(item => ({
@@ -85,7 +90,8 @@ export default function KpopCollection() {
           img: item.image_url,
           description: item.description,
           member: item.members?.name,
-          group: item.members?.groups?.name
+          group: item.members?.groups?.name,
+          isFavorite: item.is_favorite
         }));
         setCards(formatted);
       }
@@ -254,6 +260,31 @@ export default function KpopCollection() {
     }
   }
 
+  // --- FUNÇÃO 7: TOGGLE FAVORITO ---
+  async function handleToggleFavorite() {
+    if (!editingCard) return;
+
+    const newFavoriteStatus = !editingCard.isFavorite;
+
+    try {
+      const { error } = await supabase
+        .from('collection')
+        .update({ is_favorite: newFavoriteStatus })
+        .eq('id', editingCard.id);
+
+      if (error) throw error;
+
+      setCards(prev => prev.map(c =>
+        c.id === editingCard.id ? { ...c, isFavorite: newFavoriteStatus } : c
+      ));
+
+      setEditingCard({ ...editingCard, isFavorite: newFavoriteStatus });
+
+    } catch (error) {
+      console.error(error);
+    }
+  }
+
   function openEditModal(card) {
     setEditingCard(card);
     setTempDescription(card.description || '');
@@ -301,6 +332,11 @@ export default function KpopCollection() {
       <div className="grid grid-cols-3 md:grid-cols-6 lg:grid-cols-7 gap-3">
         {filteredCards.map((card) => (
           <div key={card.id} className="aspect-[2/3] bg-white rounded-lg shadow-sm border border-gray-200 flex flex-col items-center justify-center p-2 relative group hover:shadow-md transition-shadow overflow-hidden">
+            {card.isFavorite && (
+              <div className="absolute top-1 right-1 z-10 bg-pink-500 rounded-full p-1">
+                <Heart size={12} fill="white" className="text-white" />
+              </div>
+            )}
             {card.img ? (
               <div onClick={() => openEditModal(card)} className="w-full h-full cursor-pointer relative">
                 <img src={card.img} alt="Card" className="w-full h-full object-cover rounded" />
@@ -364,6 +400,14 @@ export default function KpopCollection() {
 
               {/* BOTOES DE AÇÃO */}
               <div className="flex gap-2 flex-wrap">
+                <button
+                  onClick={handleToggleFavorite}
+                  className={`p-2 rounded-lg transition-colors ${editingCard.isFavorite ? 'bg-pink-500 text-white hover:bg-pink-600' : 'bg-pink-100 text-pink-600 hover:bg-pink-200'}`}
+                  title={editingCard.isFavorite ? 'Remover dos favoritos' : 'Adicionar aos favoritos'}
+                >
+                  <Heart size={20} fill={editingCard.isFavorite ? 'currentColor' : 'none'} />
+                </button>
+
                 <button
                   onClick={handleDeletePhoto}
                   className="bg-red-100 text-red-600 p-2 rounded-lg hover:bg-red-200 transition-colors"
