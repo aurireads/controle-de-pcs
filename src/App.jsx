@@ -297,6 +297,10 @@ export default function KpopCollection() {
     const matchGroup = selectedGroup ? card.group === selectedGroup : true;
     const matchMember = selectedMember ? card.member === selectedMember : true;
     return matchGroup && matchMember;
+  }).sort((a, b) => {
+    if (a.isFavorite && !b.isFavorite) return -1;
+    if (!a.isFavorite && b.isFavorite) return 1;
+    return 0;
   });
 
   return (
