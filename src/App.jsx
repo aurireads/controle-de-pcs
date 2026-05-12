@@ -13,6 +13,18 @@ export default function KpopCollection() {
   // Estados do Modal
   const [editingCard, setEditingCard] = useState(null);
   const [tempDescription, setTempDescription] = useState('');
+  const [tempStatusPagamento, setTempStatusPagamento] = useState('pendente');
+  const [tempValor, setTempValor] = useState('');
+  const [tempTaxa, setTempTaxa] = useState('');
+  const [temptaxa2, setTemptaxa2] = useState('');
+  const [tempFrete, setTempFrete] = useState('');
+  const [tempfrete2, setTempfrete2] = useState('');
+  const [tempStatusTaxa1, setTempStatusTaxa1] = useState('pendente');
+  const [tempStatusTaxa2, setTempStatusTaxa2] = useState('pendente');
+  const [tempStatusFrete1, setTempStatusFrete1] = useState('pendente');
+  const [tempStatusFrete2, setTempStatusFrete2] = useState('pendente');
+  const [tempNomeCeg, setTempNomeCeg] = useState('');
+
   const [moveToStatus, setMoveToStatus] = useState('');
   const [moveToGroup, setMoveToGroup] = useState('');
   const [moveToMember, setMoveToMember] = useState('');
@@ -29,7 +41,7 @@ export default function KpopCollection() {
     const { data: groups } = await supabase
       .from('groups')
       .select('id, name, members(id, name)');
-    
+
     const groupsObj = {};
     groups?.forEach(g => {
       groupsObj[g.name] = g.members.map(m => m.name);
@@ -39,7 +51,11 @@ export default function KpopCollection() {
 
   async function fetchCollection() {
     setLoading(true);
-    
+    let query = supabase
+      .from('collection')
+      .select(`*, members (name, groups (name))`)
+      .eq('status', currentTab);
+
     if (selectedMember && selectedGroup) {
       const { data: memberData } = await supabase
         .from('members')
@@ -47,92 +63,42 @@ export default function KpopCollection() {
         .eq('name', selectedMember)
         .eq('groups.name', selectedGroup)
         .single();
-      
+
       if (memberData) {
-        let query = supabase
-          .from('collection')
-          .select(`*, members (name, groups (name))`)
-          .eq('member_id', memberData.id)
-          .eq('status', currentTab)
-          .order('image_url', { ascending: false, nullsFirst: false })
-          .order('created_at', { ascending: true })
-          .limit(5000);
-        
-        const { data: collection } = await query;
-        
-        if (collection) {
-          const formatted = collection.map(item => ({
-            id: item.id,
-            status: item.status,
-            img: item.image_url,
-            description: item.description,
-            member: item.members?.name,
-            group: item.members?.groups?.name,
-            isFavorite: item.is_favorite
-          }));
-          setCards(formatted);
-        }
+        query = query.eq('member_id', memberData.id);
       }
-    } else {
-      let query = supabase
-        .from('collection')
-        .select(`*, members (name, groups (name))`)
-        .eq('status', currentTab)
-        .order('created_at', { ascending: false })
-        .limit(1000);
-      
-      const { data: collection } = await query;
-      
-      if (collection) {
-        const formatted = collection.map(item => ({
-          id: item.id,
-          status: item.status,
-          img: item.image_url,
-          description: item.description,
-          member: item.members?.name,
-          group: item.members?.groups?.name,
-          isFavorite: item.is_favorite
-        }));
-        setCards(formatted);
-      }
+    }
+
+    const { data: collection } = await query
+      .order('image_url', { ascending: false, nullsFirst: false })
+      .order('created_at', { ascending: false })
+      .limit(1000);
+
+    if (collection) {
+      const formatted = collection.map(item => ({
+        ...item,
+        img: item.image_url,
+        member: item.members?.name,
+        group: item.members?.groups?.name,
+        isFavorite: item.is_favorite
+      }));
+      setCards(formatted);
     }
     setLoading(false);
   }
 
-  // --- FUNÇÃO DE UPLOAD ---
   async function handleImageUpload(event, cardId) {
     const file = event.target.files[0];
     if (!file) return;
-
     setLoading(true);
     try {
       const fileName = `${Date.now()}_${file.name}`;
-
-      // 1. Enviar arquivo
-      const { error: uploadError } = await supabase.storage
-        .from('cards')
-        .upload(fileName, file);
-
+      const { error: uploadError } = await supabase.storage.from('cards').upload(fileName, file);
       if (uploadError) throw uploadError;
-
-      // 2. Pegar link
-      const { data: { publicUrl } } = supabase.storage
-        .from('cards')
-        .getPublicUrl(fileName);
-
-      // 3. Salvar link no banco
-      const { error: dbError } = await supabase
-        .from('collection')
-        .update({ image_url: publicUrl })
-        .eq('id', cardId);
-
+      const { data: { publicUrl } } = supabase.storage.from('cards').getPublicUrl(fileName);
+      const { error: dbError } = await supabase.from('collection').update({ image_url: publicUrl }).eq('id', cardId);
       if (dbError) throw dbError;
-
-      // 4. Atualizar tela
-      setCards(prev => prev.map(card =>
-        card.id === cardId ? { ...card, img: publicUrl } : card
-      ));
-
+      setCards(prev => prev.map(card => card.id === cardId ? { ...card, img: publicUrl } : card));
     } catch (error) {
       console.error(error);
     } finally {
@@ -140,146 +106,79 @@ export default function KpopCollection() {
     }
   }
 
-  // --- FUNÇÃO DE DELETAR ---
   async function handleDeletePhoto() {
     if (!editingCard || !editingCard.img) return;
-
-    const confirmDelete = window.confirm("Tem certeza que quer remover essa foto?");
-    if (!confirmDelete) return;
-
+    if (!window.confirm("Remover foto?")) return;
     try {
       const fileName = editingCard.img.split('/cards/')[1];
-      if (fileName) {
-        await supabase.storage.from('cards').remove([fileName]);
-      }
-
-      const { error: dbError } = await supabase
-        .from('collection')
-        .update({ image_url: null })
-        .eq('id', editingCard.id);
-
-      if (dbError) throw dbError;
-
-      setCards(prev => prev.map(c =>
-        c.id === editingCard.id ? { ...c, img: null } : c
-      ));
-
+      if (fileName) await supabase.storage.from('cards').remove([fileName]);
+      await supabase.from('collection').update({ image_url: null }).eq('id', editingCard.id);
+      setCards(prev => prev.map(c => c.id === editingCard.id ? { ...c, img: null } : c));
       setEditingCard(null);
-
     } catch (error) {
       console.error(error);
     }
   }
 
-  // --- FUNÇÃO DE SALVAR LEGENDA ---
   async function saveDescription() {
     if (!editingCard) return;
-
     try {
-      const { error } = await supabase
-        .from('collection')
-        .update({ description: tempDescription })
-        .eq('id', editingCard.id);
+      const updateData = {
+        description: tempDescription,
+        status_pagamento: tempStatusPagamento,
+        valor_item: tempValor === '' ? null : tempValor,
+        taxa: tempTaxa === '' ? null : tempTaxa,
+        taxa2: temptaxa2 === '' ? null : temptaxa2,
+        frete: tempFrete === '' ? null : tempFrete,
+        frete2: tempfrete2 === '' ? null : tempfrete2,
+        status_taxa1: tempStatusTaxa1,
+        status_taxa2: tempStatusTaxa2,
+        status_frete1: tempStatusFrete1,
+        status_frete2: tempStatusFrete2,
+        nome_ceg: tempNomeCeg
+      };
 
+      const { error } = await supabase.from('collection').update(updateData).eq('id', editingCard.id);
       if (error) throw error;
 
-      setCards(prev => prev.map(c =>
-        c.id === editingCard.id ? { ...c, description: tempDescription } : c
-      ));
-
+      setCards(prev => prev.map(c => c.id === editingCard.id ? { ...c, ...updateData } : c));
       setEditingCard(null);
     } catch (error) {
       console.error(error);
     }
   }
 
-  // --- FUNÇÃO 5: MOVER CARD DE STATUS ---
   async function handleMoveStatus() {
     if (!editingCard || !moveToStatus) return;
-    if (moveToStatus === editingCard.status) return;
-
-    const statusNames = {
-      wishlist: 'Wishlist',
-      on_the_way: 'A Caminho',
-      owned: 'Minha Coleção',
-      ceg: 'CEG'
-    };
-
-    if (!window.confirm(`Mover para "${statusNames[moveToStatus]}"?`)) return;
-
     try {
-      const { error } = await supabase
-        .from('collection')
-        .update({ status: moveToStatus })
-        .eq('id', editingCard.id);
-
-      if (error) throw error;
-
+      await supabase.from('collection').update({ status: moveToStatus }).eq('id', editingCard.id);
       setCards(prev => prev.filter(c => c.id !== editingCard.id));
       setEditingCard(null);
-      setMoveToStatus('');
-
     } catch (error) {
       console.error(error);
     }
   }
 
-  // --- FUNÇÃO 6: MOVER CARD PARA OUTRO MEMBRO ---
   async function handleMoveMember() {
     if (!editingCard || !moveToGroup || !moveToMember) return;
-
-    const { data: memberData } = await supabase
-      .from('members')
-      .select('id, groups!inner(name)')
-      .eq('name', moveToMember)
-      .eq('groups.name', moveToGroup)
-      .single();
-
+    const { data: memberData } = await supabase.from('members').select('id, groups!inner(name)').eq('name', moveToMember).eq('groups.name', moveToGroup).single();
     if (!memberData) return;
-
-    if (!window.confirm(`Mover para ${moveToMember} (${moveToGroup})?`)) return;
-
     try {
-      const { error } = await supabase
-        .from('collection')
-        .update({ member_id: memberData.id })
-        .eq('id', editingCard.id);
-
-      if (error) throw error;
-
-      setCards(prev => prev.map(c =>
-        c.id === editingCard.id ? { ...c, member: moveToMember, group: moveToGroup } : c
-      ));
-      
+      await supabase.from('collection').update({ member_id: memberData.id }).eq('id', editingCard.id);
+      setCards(prev => prev.map(c => c.id === editingCard.id ? { ...c, member: moveToMember, group: moveToGroup } : c));
       setEditingCard(null);
-      setMoveToGroup('');
-      setMoveToMember('');
-
     } catch (error) {
       console.error(error);
     }
   }
 
-  // --- FUNÇÃO 7: TOGGLE FAVORITO ---
   async function handleToggleFavorite() {
     if (!editingCard) return;
-
-    const newFavoriteStatus = !editingCard.isFavorite;
-
+    const nextFav = !editingCard.isFavorite;
     try {
-      const { error } = await supabase
-        .from('collection')
-        .update({ is_favorite: newFavoriteStatus })
-        .eq('id', editingCard.id);
-
-      if (error) throw error;
-
-      setCards(prev => prev.map(c =>
-        c.id === editingCard.id ? { ...c, isFavorite: newFavoriteStatus } : c
-      ));
-
-      setEditingCard({ ...editingCard, isFavorite: newFavoriteStatus });
-
+      await supabase.from('collection').update({ is_favorite: nextFav }).eq('id', editingCard.id);
+      setCards(prev => prev.map(c => c.id === editingCard.id ? { ...c, isFavorite: nextFav } : c));
+      setEditingCard({ ...editingCard, isFavorite: nextFav });
     } catch (error) {
       console.error(error);
     }
@@ -288,191 +187,139 @@ export default function KpopCollection() {
   function openEditModal(card) {
     setEditingCard(card);
     setTempDescription(card.description || '');
+    setTempStatusPagamento(card.status_pagamento || 'pendente');
+    setTempValor(card.valor_item || '');
+    setTempTaxa(card.taxa || '');
+    setTemptaxa2(card.taxa2 || '');
+    setTempFrete(card.frete || '');
+    setTempfrete2(card.frete2 || '');
+    setTempStatusTaxa1(card.status_taxa1 || 'pendente');
+    setTempStatusTaxa2(card.status_taxa2 || 'pendente');
+    setTempStatusFrete1(card.status_frete1 || 'pendente');
+    setTempStatusFrete2(card.status_frete2 || 'pendente');
+    setTempNomeCeg(card.nome_ceg || '');
     setMoveToStatus('');
     setMoveToGroup('');
     setMoveToMember('');
   }
 
-  const filteredCards = cards.filter(card => {
-    const matchGroup = selectedGroup ? card.group === selectedGroup : true;
-    const matchMember = selectedMember ? card.member === selectedMember : true;
-    return matchGroup && matchMember;
-  });
+  const filteredCards = cards
+    .filter(card => (selectedGroup ? card.group === selectedGroup : true) && (selectedMember ? card.member === selectedMember : true))
+    .sort((a, b) => Number(b.isFavorite) - Number(a.isFavorite));
 
   return (
     <div className="min-h-screen bg-gray-50 p-8 font-sans">
-      {/* Abas */}
-      <div className="flex justify-center space-x-8 mb-10 border-b border-gray-200 pb-4">
+      <div className="flex justify-center space-x-8 mb-10 border-b pb-4">
         {['wishlist', 'on_the_way', 'owned', 'ceg'].map((tab) => (
-          <button key={tab} onClick={() => setCurrentTab(tab)} className={`text-lg font-medium capitalize pb-2 transition-colors ${currentTab === tab ? 'text-purple-600 border-b-2 border-purple-600' : 'text-gray-400 hover:text-gray-600'}`}>
+          <button key={tab} onClick={() => setCurrentTab(tab)} className={`text-lg font-medium capitalize pb-2 transition-colors ${currentTab === tab ? 'text-purple-600 border-b-2 border-purple-600' : 'text-gray-400'}`}>
             {tab.replace(/_/g, ' ').toUpperCase()}
           </button>
         ))}
       </div>
 
-      {/* Filtros */}
       <div className="flex gap-4 mb-8">
-        <div className="relative">
-          <select className="appearance-none bg-white border border-gray-300 rounded-lg py-2 px-4 pr-8 focus:outline-none focus:ring-2 focus:ring-purple-500" value={selectedGroup} onChange={(e) => { setSelectedGroup(e.target.value); setSelectedMember(''); }}>
-            <option value="">Todos os Grupos</option>
-            {Object.keys(groupsData).map(g => <option key={g} value={g}>{g}</option>)}
-          </select>
-          <ChevronDown className="absolute right-2 top-3 w-4 h-4 text-gray-500 pointer-events-none" />
-        </div>
-        <div className="relative">
-          <select className="appearance-none bg-white border border-gray-300 rounded-lg py-2 px-4 pr-8 focus:outline-none focus:ring-2 focus:ring-purple-500 disabled:opacity-50" value={selectedMember} onChange={(e) => setSelectedMember(e.target.value)} disabled={!selectedGroup}>
-            <option value="">Todos os Membros</option>
-            {selectedGroup && groupsData[selectedGroup]?.map(m => <option key={m} value={m}>{m}</option>)}
-          </select>
-          <ChevronDown className="absolute right-2 top-3 w-4 h-4 text-gray-500 pointer-events-none" />
-        </div>
+        <select className="bg-white border rounded-lg py-2 px-4 pr-8" value={selectedGroup} onChange={(e) => { setSelectedGroup(e.target.value); setSelectedMember(''); }}>
+          <option value="">Todos os Grupos</option>
+          {Object.keys(groupsData).map(g => <option key={g} value={g}>{g}</option>)}
+        </select>
+        <select className="bg-white border rounded-lg py-2 px-4 pr-8" value={selectedMember} onChange={(e) => setSelectedMember(e.target.value)} disabled={!selectedGroup}>
+          <option value="">Todos os Membros</option>
+          {selectedGroup && groupsData[selectedGroup]?.map(m => <option key={m} value={m}>{m}</option>)}
+        </select>
       </div>
 
-      {/* Grid */}
+      {currentTab === 'ceg' && (
+        <div className="flex justify-end mb-6">
+          <a href="/cegs" target="_blank" className="bg-purple-600 text-white px-4 py-2 rounded-lg font-bold">ABRIR PÁGINA DE CEGS</a>
+        </div>
+      )}
+
       <div className="grid grid-cols-3 md:grid-cols-6 lg:grid-cols-7 gap-3">
         {filteredCards.map((card) => (
-          <div key={card.id} className="aspect-[2/3] bg-white rounded-lg shadow-sm border border-gray-200 flex flex-col items-center justify-center p-2 relative group hover:shadow-md transition-shadow overflow-hidden">
-            {card.isFavorite && (
-              <div className="absolute top-1 right-1 z-10 bg-pink-500 rounded-full p-1">
-                <Heart size={12} fill="white" className="text-white" />
-              </div>
-            )}
+          <div key={card.id} className="aspect-[2/3] bg-white rounded-lg shadow-sm border p-2 relative group overflow-hidden">
+            {card.isFavorite && <div className="absolute top-1 right-1 z-10 bg-pink-500 rounded-full p-1"><Heart size={12} fill="white" className="text-white" /></div>}
             {card.img ? (
-              <div onClick={() => openEditModal(card)} className="w-full h-full cursor-pointer relative">
-                <img src={card.img} alt="Card" className="w-full h-full object-cover rounded" />
-                {card.description && (
-                  <div className="absolute bottom-0 w-full bg-black/60 text-white text-[10px] p-1 text-center truncate">
-                    {card.description}
-                  </div>
-                )}
+              <div onClick={() => openEditModal(card)} className="w-full h-full cursor-pointer">
+                <img src={card.img} className="w-full h-full object-cover rounded" />
+                {card.description && <div className="absolute bottom-0 w-full bg-black/60 text-white text-[10px] p-1 text-center truncate">{card.description}</div>}
               </div>
             ) : (
-              <label className="w-full h-full bg-gray-50 rounded flex flex-col items-center justify-center text-gray-400 gap-2 cursor-pointer hover:bg-gray-100 transition-colors">
+              <label className="w-full h-full flex flex-col items-center justify-center text-gray-400 cursor-pointer">
                 <Camera size={24} />
-                <span className="text-xs font-medium text-gray-500">{card.member}</span>
-                <span className="text-[10px] text-purple-600 font-bold mt-1 bg-purple-100 px-2 py-1 rounded">Add Foto</span>
-                <input type="file" accept="image/*" className="hidden" onChange={(e) => handleImageUpload(e, card.id)} disabled={loading} />
+                <input type="file" className="hidden" onChange={(e) => handleImageUpload(e, card.id)} />
               </label>
             )}
           </div>
         ))}
       </div>
 
-      {/* MODAL EDITAR / DELETAR */}
       {editingCard && (
         <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm overflow-hidden relative animate-fade-in">
-            <button onClick={() => setEditingCard(null)} className="absolute top-2 right-2 bg-gray-100 p-1 rounded-full hover:bg-gray-200 text-gray-600">
-              <X size={20} />
-            </button>
+          <div className="bg-white rounded-xl w-full max-w-sm overflow-hidden relative p-4 space-y-4 max-h-[90vh] overflow-y-auto">
+            <button onClick={() => setEditingCard(null)} className="absolute top-2 right-2 text-gray-400"><X size={24} /></button>
+            <img src={editingCard.img} className="h-48 w-full object-contain mx-auto" />
+            
+            <div className="space-y-3">
+              <input type="text" value={tempDescription} onChange={(e) => setTempDescription(e.target.value)} className="w-full border p-2 rounded text-sm" placeholder="Descrição/Álbum" />
+              
+              <div className="grid grid-cols-2 gap-2">
+                <select value={tempStatusPagamento} onChange={(e) => setTempStatusPagamento(e.target.value)} className="border p-2 rounded text-xs">
+                  <option value="pendente">Pendente</option><option value="pago">Pago</option>
+                </select>
+                <input type="number" value={tempValor} onChange={(e) => setTempValor(e.target.value)} className="border p-2 rounded text-xs" placeholder="Valor Item" />
+              </div>
 
-            <div className="h-64 bg-gray-100 flex items-center justify-center">
-              <img src={editingCard.img} className="h-full object-contain" alt="Preview" />
+              {/* TAXAS E FRETES DETALHADOS NO MODAL DO APP */}
+              <div className="bg-purple-50 p-3 rounded-lg space-y-2">
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="flex gap-1">
+                    <input type="number" value={tempTaxa} onChange={(e) => setTempTaxa(e.target.value)} className="w-full border p-1 rounded text-xs" placeholder="Taxa 1" />
+                    <select value={tempStatusTaxa1} onChange={(e) => setTempStatusTaxa1(e.target.value)} className="border rounded text-[10px]">
+                      <option value="pendente">P</option><option value="pago">OK</option>
+                    </select>
+                  </div>
+                  <div className="flex gap-1">
+                    <input type="number" value={temptaxa2} onChange={(e) => setTemptaxa2(e.target.value)} className="w-full border p-1 rounded text-xs" placeholder="Taxa 2" />
+                    <select value={tempStatusTaxa2} onChange={(e) => setTempStatusTaxa2(e.target.value)} className="border rounded text-[10px]">
+                      <option value="pendente">P</option><option value="pago">OK</option>
+                    </select>
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="flex gap-1">
+                    <input type="number" value={tempFrete} onChange={(e) => setTempFrete(e.target.value)} className="w-full border p-1 rounded text-xs" placeholder="Frete 1" />
+                    <select value={tempStatusFrete1} onChange={(e) => setTempStatusFrete1(e.target.value)} className="border rounded text-[10px]">
+                      <option value="pendente">P</option><option value="pago">OK</option>
+                    </select>
+                  </div>
+                  <div className="flex gap-1">
+                    <input type="number" value={tempfrete2} onChange={(e) => setTempfrete2(e.target.value)} className="w-full border p-1 rounded text-xs" placeholder="Frete 2" />
+                    <select value={tempStatusFrete2} onChange={(e) => setTempStatusFrete2(e.target.value)} className="border rounded text-[10px]">
+                      <option value="pendente">P</option><option value="pago">OK</option>
+                    </select>
+                  </div>
+                </div>
+                <input type="text" value={tempNomeCeg} onChange={(e) => setTempNomeCeg(e.target.value)} className="w-full border p-2 rounded text-xs" placeholder="ID da CEG" />
+              </div>
+
+              <button onClick={saveDescription} className="w-full bg-purple-600 text-white p-2 rounded-lg font-bold flex items-center justify-center gap-2">
+                SALVAR <ArrowRight size={16}/>
+              </button>
             </div>
 
-            <div className="p-4 space-y-4">
-              <div>
-                <h3 className="font-bold text-lg text-gray-800">{editingCard.member}</h3>
-                <p className="text-sm text-purple-600">{editingCard.group}</p>
-              </div>
+            <div className="flex gap-2 pt-2 border-t">
+              <button onClick={handleToggleFavorite} className={`flex-1 p-2 rounded ${editingCard.isFavorite ? 'bg-pink-500 text-white' : 'bg-pink-100 text-pink-600'}`}><Heart size={20} fill={editingCard.isFavorite ? 'white' : 'none'} /></button>
+              <button onClick={handleDeletePhoto} className="flex-1 bg-red-100 text-red-600 p-2 rounded"><Trash2 size={20} /></button>
+            </div>
 
-              <div>
-                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Legenda / Álbum</label>
-                <div className="flex gap-2">
-                    <input
-                    type="text"
-                    value={tempDescription}
-                    onChange={(e) => setTempDescription(e.target.value)}
-                    placeholder="Ex: Formula of Love - Scientist Ver."
-                    className="w-full border border-gray-300 rounded p-2 text-sm focus:outline-none focus:border-purple-500"
-                    />
-                    {/* Botão de salvar legenda separado, opcional, mas útil se quiser salvar sem fechar, 
-                        mas aqui vou assumir que ao digitar ele já está pronto para salvar ou precisa de um botão específico se não for automático.
-                        Vou manter simples como estava, mas a função saveDescription precisa ser chamada em algum lugar. 
-                        No código original ela não estava ligada a um botão visualmente explícito exceto talvez um "Save" que sumiu? 
-                        Ah, notei que faltava o botão de salvar legenda no seu código original dentro do modal visualmente, 
-                        vou adicionar um botão pequeno de salvar ao lado do input para garantir funcionalidade */}
-                    <button onClick={saveDescription} className="bg-purple-100 text-purple-600 p-2 rounded hover:bg-purple-200">
-                        <ArrowRight size={16}/>
-                    </button>
-                </div>
-              </div>
-
-              {/* BOTOES DE AÇÃO */}
-              <div className="flex gap-2 flex-wrap">
-                <button
-                  onClick={handleToggleFavorite}
-                  className={`p-2 rounded-lg transition-colors ${editingCard.isFavorite ? 'bg-pink-500 text-white hover:bg-pink-600' : 'bg-pink-100 text-pink-600 hover:bg-pink-200'}`}
-                  title={editingCard.isFavorite ? 'Remover dos favoritos' : 'Adicionar aos favoritos'}
-                >
-                  <Heart size={20} fill={editingCard.isFavorite ? 'currentColor' : 'none'} />
-                </button>
-
-                <button
-                  onClick={handleDeletePhoto}
-                  className="bg-red-100 text-red-600 p-2 rounded-lg hover:bg-red-200 transition-colors"
-                  title="Excluir foto"
-                >
-                  <Trash2 size={20} />
-                </button>
-
-                {/* Seletor de status para mover */}
-                <select
-                  value={moveToStatus}
-                  onChange={(e) => setMoveToStatus(e.target.value)}
-                  className="border border-gray-300 rounded-lg px-2 py-1 text-sm focus:outline-none focus:border-blue-500"
-                >
-                  <option value="">Mover para...</option>
-                  <option value="wishlist">Wishlist</option>
-                  <option value="on_the_way">A Caminho</option>
-                  <option value="owned">Minha Coleção</option>
-                  <option value="ceg">CEG</option>
+            <div className="space-y-2 pt-2">
+              <label className="block text-[10px] font-bold text-gray-500 uppercase">Trocar Status</label>
+              <div className="flex gap-2">
+                <select value={moveToStatus} onChange={(e) => setMoveToStatus(e.target.value)} className="flex-1 border rounded p-1 text-sm">
+                  <option value="">Mover...</option>
+                  <option value="wishlist">Wishlist</option><option value="on_the_way">A Caminho</option><option value="owned">Coleção</option><option value="ceg">CEG</option>
                 </select>
-
-                {moveToStatus && (
-                  <button
-                    onClick={handleMoveStatus}
-                    className="bg-blue-100 text-blue-600 p-2 rounded-lg hover:bg-blue-200 transition-colors flex items-center gap-1"
-                    title="Confirmar movimento"
-                  >
-                    <ArrowRight size={20} />
-                  </button>
-                )}
-              </div>
-
-              {/* MOVER PARA OUTRO MEMBRO */}
-              <div className="border-t pt-3 mt-2">
-                <label className="block text-xs font-bold text-gray-500 uppercase mb-2">Mover para outro membro</label>
-                <div className="flex gap-2 flex-wrap">
-                  <select
-                    value={moveToGroup}
-                    onChange={(e) => { setMoveToGroup(e.target.value); setMoveToMember(''); }}
-                    className="border border-gray-300 rounded-lg px-2 py-1 text-sm focus:outline-none focus:border-green-500 flex-1"
-                  >
-                    <option value="">Grupo...</option>
-                    {Object.keys(groupsData).map(g => <option key={g} value={g}>{g}</option>)}
-                  </select>
-
-                  <select
-                    value={moveToMember}
-                    onChange={(e) => setMoveToMember(e.target.value)}
-                    disabled={!moveToGroup}
-                    className="border border-gray-300 rounded-lg px-2 py-1 text-sm focus:outline-none focus:border-green-500 flex-1 disabled:opacity-50"
-                  >
-                    <option value="">Membro...</option>
-                    {moveToGroup && groupsData[moveToGroup]?.map(m => <option key={m} value={m}>{m}</option>)}
-                  </select>
-
-                  {moveToMember && (
-                    <button
-                      onClick={handleMoveMember}
-                      className="bg-green-100 text-green-600 p-2 rounded-lg hover:bg-green-200 transition-colors flex items-center gap-1"
-                      title="Confirmar movimento"
-                    >
-                      <ArrowRight size={20} />
-                    </button>
-                  )}
-                </div>
+                <button onClick={handleMoveStatus} className="bg-blue-600 text-white px-3 rounded"><ArrowRight size={16}/></button>
               </div>
             </div>
           </div>
