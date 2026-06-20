@@ -1,8 +1,15 @@
 import { useState, useEffect } from 'react';
 import { supabase } from './supabase';
-import { Camera, ChevronDown, X, Trash2, ArrowRight, Heart } from 'lucide-react';
+import { Camera, ChevronDown, X, Trash2, ArrowRight, Heart, LogOut, Lock } from 'lucide-react';
 
 export default function KpopCollection() {
+  // --- ESTADOS DE AUTENTICAÇÃO ---
+  const [session, setSession] = useState(null);
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [authLoading, setAuthLoading] = useState(false);
+
+  // --- ESTADOS JÁ EXISTENTES ---
   const [currentTab, setCurrentTab] = useState('wishlist');
   const [selectedGroup, setSelectedGroup] = useState('');
   const [selectedMember, setSelectedMember] = useState('');
@@ -29,14 +36,57 @@ export default function KpopCollection() {
   const [moveToGroup, setMoveToGroup] = useState('');
   const [moveToMember, setMoveToMember] = useState('');
 
+  // --- CONTROLE DE SESSÃO DO USUÁRIO ---
   useEffect(() => {
-    fetchGroups();
+    // Pega a sessão atual ao montar o componente
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSession(session);
+    });
+
+    // Escuta mudanças no estado de auth (login/logout)
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session);
+    });
+
+    return () => subscription.unsubscribe();
   }, []);
 
   useEffect(() => {
-    fetchCollection();
-  }, [currentTab, selectedGroup, selectedMember]);
+    if (session) {
+      fetchGroups();
+    }
+  }, [session]);
 
+  useEffect(() => {
+    if (session) {
+      fetchCollection();
+    }
+  }, [currentTab, selectedGroup, selectedMember, session]);
+
+  // --- FUNÇÕES DE AUTENTICAÇÃO ---
+  async function handleLogin(e) {
+    e.preventDefault();
+    setAuthLoading(true);
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    if (error) alert('Erro ao fazer login: ' + error.message);
+    setAuthLoading(false);
+  }
+
+  async function handleSignUp(e) {
+    e.preventDefault();
+    setAuthLoading(true);
+    const { error } = await supabase.auth.signUp({ email, password });
+    if (error) alert('Erro ao cadastrar: ' + error.message);
+    else alert('Cadastro realizado! Se o Supabase exigir, confirme o e-mail.');
+    setAuthLoading(false);
+  }
+
+  async function handleLogout() {
+    await supabase.auth.signOut();
+    setCards([]);
+  }
+
+  // --- FUNÇÕES DA COLEÇÃO ---
   async function fetchGroups() {
     const { data: groups } = await supabase
       .from('groups')
@@ -54,7 +104,9 @@ export default function KpopCollection() {
     let query = supabase
       .from('collection')
       .select(`*, members (name, groups (name))`)
-      .eq('status', currentTab);
+      .eq('status', currentTab)
+      // FILTRA APENAS OS CARDS DO USUÁRIO LOGADO:
+      .eq('user_id', session.user.id); 
 
     if (selectedMember && selectedGroup) {
       const { data: memberData } = await supabase
@@ -92,7 +144,7 @@ export default function KpopCollection() {
     if (!file) return;
     setLoading(true);
     try {
-      const fileName = `${Date.now()}_${file.name}`;
+      const fileName = `${session.user.id}/${Date.now()}_${file.name}`; // Organiza por pasta do usuário no Storage
       const { error: uploadError } = await supabase.storage.from('cards').upload(fileName, file);
       if (uploadError) throw uploadError;
       const { data: { publicUrl } } = supabase.storage.from('cards').getPublicUrl(fileName);
@@ -159,19 +211,6 @@ export default function KpopCollection() {
     }
   }
 
-  async function handleMoveMember() {
-    if (!editingCard || !moveToGroup || !moveToMember) return;
-    const { data: memberData } = await supabase.from('members').select('id, groups!inner(name)').eq('name', moveToMember).eq('groups.name', moveToGroup).single();
-    if (!memberData) return;
-    try {
-      await supabase.from('collection').update({ member_id: memberData.id }).eq('id', editingCard.id);
-      setCards(prev => prev.map(c => c.id === editingCard.id ? { ...c, member: moveToMember, group: moveToGroup } : c));
-      setEditingCard(null);
-    } catch (error) {
-      console.error(error);
-    }
-  }
-
   async function handleToggleFavorite() {
     if (!editingCard) return;
     const nextFav = !editingCard.isFavorite;
@@ -207,8 +246,55 @@ export default function KpopCollection() {
     .filter(card => (selectedGroup ? card.group === selectedGroup : true) && (selectedMember ? card.member === selectedMember : true))
     .sort((a, b) => Number(b.isFavorite) - Number(a.isFavorite));
 
+  // --- TELA DE LOGIN (BARREIRA CASO NÃO ESTEJA LOGADO) ---
+// --- TELA DE LOGIN (BARREIRA CASO NÃO ESTEJA LOGADO) ---
+  if (!session) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4 font-sans">
+        <div className="bg-white p-8 rounded-xl shadow-md border max-w-sm w-full space-y-6">
+          <div className="flex flex-col items-center space-y-2">
+            <div className="bg-purple-100 p-3 rounded-full text-purple-600">
+              <Lock size={32} />
+            </div>
+            <h2 className="text-2xl font-bold text-gray-800">Minha Coleção K-Pop</h2>
+            <p className="text-gray-400 text-sm text-center">Faça login ou crie uma conta para gerenciar seus Photocards.</p>
+          </div>
+
+          {/* O FORMULÁRIO CORRIGIDO FICA AQUI EMBAIXO: */}
+          <form onSubmit={(e) => e.preventDefault()} className="space-y-4">
+            <div>
+              <label className="block text-xs font-semibold text-gray-600 uppercase mb-1">E-mail</label>
+              <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className="w-full border p-2 rounded text-sm focus:outline-purple-600" placeholder="seu@email.com" required />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-gray-600 uppercase mb-1">Senha</label>
+              <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} className="w-full border p-2 rounded text-sm focus:outline-purple-600" placeholder="••••••••" required />
+            </div>
+
+            <div className="flex gap-2 pt-2">
+              <button type="button" onClick={(e) => handleLogin(e)} disabled={authLoading} className="flex-1 bg-purple-600 text-white p-2 rounded-lg font-bold text-sm hover:bg-purple-700 transition-colors disabled:opacity-50">
+                {authLoading ? 'Entrando...' : 'Entrar'}
+              </button>
+              <button type="button" onClick={(e) => handleSignUp(e)} disabled={authLoading} className="flex-1 bg-gray-100 text-gray-700 p-2 rounded-lg font-bold text-sm hover:bg-gray-200 transition-colors disabled:opacity-50">
+                Cadastrar
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    );
+  }
+  // --- TELA PRINCIPAL (SÓ APARECE SE ESTIVER LOGADO) ---
   return (
     <div className="min-h-screen bg-gray-50 p-8 font-sans">
+      {/* Topbar com botão de Logout */}
+      <div className="flex justify-between items-center mb-6">
+        <span className="text-xs text-gray-500 font-medium">Logado como: <strong className="text-gray-700">{session.user.email}</strong></span>
+        <button onClick={handleLogout} className="flex items-center gap-2 text-sm text-red-600 hover:bg-red-50 px-3 py-1.5 rounded-lg font-medium transition-colors">
+          <LogOut size={16} /> Sair
+        </button>
+      </div>
+
       <div className="flex justify-center space-x-8 mb-10 border-b pb-4">
         {['wishlist', 'on_the_way', 'owned', 'ceg'].map((tab) => (
           <button key={tab} onClick={() => setCurrentTab(tab)} className={`text-lg font-medium capitalize pb-2 transition-colors ${currentTab === tab ? 'text-purple-600 border-b-2 border-purple-600' : 'text-gray-400'}`}>
@@ -234,25 +320,30 @@ export default function KpopCollection() {
         </div>
       )}
 
-      <div className="grid grid-cols-3 md:grid-cols-6 lg:grid-cols-7 gap-3">
-        {filteredCards.map((card) => (
-          <div key={card.id} className="aspect-[2/3] bg-white rounded-lg shadow-sm border p-2 relative group overflow-hidden">
-            {card.isFavorite && <div className="absolute top-1 right-1 z-10 bg-pink-500 rounded-full p-1"><Heart size={12} fill="white" className="text-white" /></div>}
-            {card.img ? (
-              <div onClick={() => openEditModal(card)} className="w-full h-full cursor-pointer">
-                <img src={card.img} className="w-full h-full object-cover rounded" />
-                {card.description && <div className="absolute bottom-0 w-full bg-black/60 text-white text-[10px] p-1 text-center truncate">{card.description}</div>}
-              </div>
-            ) : (
-              <label className="w-full h-full flex flex-col items-center justify-center text-gray-400 cursor-pointer">
-                <Camera size={24} />
-                <input type="file" className="hidden" onChange={(e) => handleImageUpload(e, card.id)} />
-              </label>
-            )}
-          </div>
-        ))}
-      </div>
+      {loading ? (
+        <div className="text-center py-10 text-gray-500">Carregando itens...</div>
+      ) : (
+        <div className="grid grid-cols-3 md:grid-cols-6 lg:grid-cols-7 gap-3">
+          {filteredCards.map((card) => (
+            <div key={card.id} className="aspect-[2/3] bg-white rounded-lg shadow-sm border p-2 relative group overflow-hidden">
+              {card.isFavorite && <div className="absolute top-1 right-1 z-10 bg-pink-500 rounded-full p-1"><Heart size={12} fill="white" className="text-white" /></div>}
+              {card.img ? (
+                <div onClick={() => openEditModal(card)} className="w-full h-full cursor-pointer">
+                  <img src={card.img} className="w-full h-full object-cover rounded" />
+                  {card.description && <div className="absolute bottom-0 w-full bg-black/60 text-white text-[10px] p-1 text-center truncate">{card.description}</div>}
+                </div>
+              ) : (
+                <label className="w-full h-full flex flex-col items-center justify-center text-gray-400 cursor-pointer">
+                  <Camera size={24} />
+                  <input type="file" className="hidden" onChange={(e) => handleImageUpload(e, card.id)} />
+                </label>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
 
+      {/* MODAL DE EDIÇÃO (Mantido igual) */}
       {editingCard && (
         <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-xl w-full max-w-sm overflow-hidden relative p-4 space-y-4 max-h-[90vh] overflow-y-auto">
@@ -269,7 +360,6 @@ export default function KpopCollection() {
                 <input type="number" value={tempValor} onChange={(e) => setTempValor(e.target.value)} className="border p-2 rounded text-xs" placeholder="Valor Item" />
               </div>
 
-              {/* TAXAS E FRETES DETALHADOS NO MODAL DO APP */}
               <div className="bg-purple-50 p-3 rounded-lg space-y-2">
                 <div className="grid grid-cols-2 gap-2">
                   <div className="flex gap-1">
