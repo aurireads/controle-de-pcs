@@ -57,8 +57,9 @@ export default function KpopCollection() {
     }
   }, [session]);
 
-  useEffect(() => {
-    if (session) {
+useEffect(() => {
+    // SÓ roda a busca se a sessão estiver de fato ativa e carregada
+    if (session && session.user) {
       fetchCollection();
     }
   }, [currentTab, selectedGroup, selectedMember, session]);
