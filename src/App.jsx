@@ -139,20 +139,37 @@ export default function KpopCollection() {
     setLoading(false);
   }
 
-  async function handleImageUpload(event, cardId) {
+async function handleImageUpload(event, cardId) {
     const file = event.target.files[0];
     if (!file) return;
+    
     setLoading(true);
     try {
-      const fileName = `${session.user.id}/${Date.now()}_${file.name}`; // Organiza por pasta do usuário no Storage
+      const fileName = `${session.user.id}/${Date.now()}_${file.name}`;
+      
+      // 1. Faz o upload para o Storage
       const { error: uploadError } = await supabase.storage.from('cards').upload(fileName, file);
       if (uploadError) throw uploadError;
+      
+      // 2. Pega a URL pública
       const { data: { publicUrl } } = supabase.storage.from('cards').getPublicUrl(fileName);
+      
+      // 3. Atualiza o Banco de Dados
       const { error: dbError } = await supabase.from('collection').update({ image_url: publicUrl }).eq('id', cardId);
       if (dbError) throw dbError;
+      
+      // 4. Atualiza o estado local de forma limpa
       setCards(prev => prev.map(card => card.id === cardId ? { ...card, img: publicUrl } : card));
+      
+      // Se o usuário estiver com o modal aberto editando ESSE card, atualiza a prévia do modal também
+      if (editingCard && editingCard.id === cardId) {
+        setEditingCard(prev => ({ ...prev, img: publicUrl }));
+      }
+
+      alert("Imagem enviada com sucesso!");
     } catch (error) {
-      console.error(error);
+      console.error("Erro no upload:", error);
+      alert("Falha ao subir imagem: " + error.message);
     } finally {
       setLoading(false);
     }
@@ -161,17 +178,29 @@ export default function KpopCollection() {
   async function handleDeletePhoto() {
     if (!editingCard || !editingCard.img) return;
     if (!window.confirm("Remover foto?")) return;
+    
+    setLoading(true); // Ativa o loading para bloquear interações repetidas
     try {
+      // Pega o nome do arquivo corretamente removendo a URL base do bucket
       const fileName = editingCard.img.split('/cards/')[1];
-      if (fileName) await supabase.storage.from('cards').remove([fileName]);
-      await supabase.from('collection').update({ image_url: null }).eq('id', editingCard.id);
+      
+      if (fileName) {
+        const { error: storageError } = await supabase.storage.from('cards').remove([fileName]);
+        if (storageError) console.error("Aviso no Storage (pode ser que a imagem não existia lá):", storageError);
+      }
+      
+      const { error: dbError } = await supabase.from('collection').update({ image_url: null }).eq('id', editingCard.id);
+      if (dbError) throw dbError;
+      
       setCards(prev => prev.map(c => c.id === editingCard.id ? { ...c, img: null } : c));
-      setEditingCard(null);
+      setEditingCard(null); // Fecha o modal para resetar o fluxo
     } catch (error) {
-      console.error(error);
+      console.error("Erro ao deletar:", error);
+      alert("Erro ao remover a foto.");
+    } finally {
+      setLoading(false);
     }
   }
-
   async function saveDescription() {
     if (!editingCard) return;
     try {
