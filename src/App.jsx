@@ -4,7 +4,11 @@ import { Camera, ChevronDown, X, Trash2, ArrowRight, Heart, LogOut, Lock } from 
 
 export default function KpopCollection() {
   // --- ESTADOS DE AUTENTICAÇÃO ---
-  const [session, setSession] = useState(null);
+  const [session, setSession] = useState(() => {
+    // Inicialização segura para evitar que o React limpe seu login por milissegundos no F5
+    const saved = Object.keys(localStorage).find(key => key.startsWith('sb-') && key.endsWith('-auth-token'));
+    return saved ? JSON.parse(localStorage.getItem(saved)) : null;
+  });
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [authLoading, setAuthLoading] = useState(false);
@@ -38,31 +42,37 @@ export default function KpopCollection() {
 
   // --- CONTROLE DE SESSÃO DO USUÁRIO ---
   useEffect(() => {
-    // Pega a sessão atual ao montar o componente
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
+    // Pega a sessão atual ao montar o componente de forma assíncrona
+    supabase.auth.getSession().then(({ data: { session: currentSession } }) => {
+      if (currentSession) setSession(currentSession);
     });
 
-    // Escuta mudanças no estado de auth (login/logout)
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session);
+    // Escuta mudanças estritas no estado de auth (login/logout reais)
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, currentSession) => {
+      if (event === 'SIGNED_IN') {
+        setSession(currentSession);
+      } else if (event === 'SIGNED_OUT') {
+        setSession(null);
+        setCards([]);
+      }
     });
 
     return () => subscription.unsubscribe();
   }, []);
 
   useEffect(() => {
-    if (session) {
+    if (session?.user?.id) {
       fetchGroups();
     }
   }, [session]);
 
-useEffect(() => {
-    // SÓ roda a busca se a sessão estiver de fato ativa e carregada
-    if (session && session.user) {
+  useEffect(() => {
+    // SÓ roda se a sessão estiver de fato ativa e carregada
+    if (session?.user?.id) {
       fetchCollection();
     }
-  }, [currentTab, selectedGroup, selectedMember, session]);
+  }, [currentTab, selectedGroup, selectedMember]); // REMOVIDO o 'session' daqui para evitar recarregamentos infinitos ao mudar de tela
+
 
   // --- FUNÇÕES DE AUTENTICAÇÃO ---
   async function handleLogin(e) {
@@ -83,8 +93,17 @@ useEffect(() => {
   }
 
   async function handleLogout() {
-    await supabase.auth.signOut();
-    setCards([]);
+    setLoading(true);
+    try {
+      await supabase.auth.signOut();
+      setSession(null);
+      setCards([]);
+      localStorage.clear(); // Limpa as travas persistentes do navegador
+    } catch (error) {
+      console.error(error);
+    } finally {
+      setLoading(false);
+    }
   }
 
   // --- FUNÇÕES DA COLEÇÃO ---
@@ -101,47 +120,54 @@ useEffect(() => {
   }
 
   async function fetchCollection() {
+    if (!session?.user?.id) return;
     setLoading(true);
-    let query = supabase
-      .from('collection')
-      .select(`*, members (name, groups (name))`)
-      .eq('status', currentTab)
-      // FILTRA APENAS OS CARDS DO USUÁRIO LOGADO:
-      .eq('user_id', session.user.id); 
+    try {
+      let query = supabase
+        .from('collection')
+        .select(`*, members (name, groups (name))`)
+        .eq('status', currentTab)
+        .eq('user_id', session.user.id); 
 
-    if (selectedMember && selectedGroup) {
-      const { data: memberData } = await supabase
-        .from('members')
-        .select('id, groups!inner(name)')
-        .eq('name', selectedMember)
-        .eq('groups.name', selectedGroup)
-        .single();
+      if (selectedMember && selectedGroup) {
+        const { data: memberData } = await supabase
+          .from('members')
+          .select('id, groups!inner(name)')
+          .eq('name', selectedMember)
+          .eq('groups.name', selectedGroup)
+          .single();
 
-      if (memberData) {
-        query = query.eq('member_id', memberData.id);
+        if (memberData) {
+          query = query.eq('member_id', memberData.id);
+        }
       }
-    }
 
-    const { data: collection } = await query
-      .order('image_url', { ascending: false, nullsFirst: false })
-      .order('created_at', { ascending: false })
-      .limit(1000);
+      const { data: collection, error } = await query
+        .order('image_url', { ascending: false, nullsFirst: false })
+        .order('created_at', { ascending: false })
+        .limit(1000);
 
-    if (collection) {
-      const formatted = collection.map(item => ({
-        ...item,
-        img: item.image_url,
-        member: item.members?.name,
-        group: item.members?.groups?.name,
-        isFavorite: item.is_favorite
-      }));
-      setCards(formatted);
+      if (error) throw error;
+
+      if (collection) {
+        const formatted = collection.map(item => ({
+          ...item,
+          img: item.image_url,
+          member: item.members?.name,
+          group: item.members?.groups?.name,
+          isFavorite: item.is_favorite
+        }));
+        setCards(formatted);
+      }
+    } catch (error) {
+      console.error(error);
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   }
 
-async function handleImageUpload(event, cardId) {
-    // 1. IMPORTANTE: Para o comportamento padrão do navegador do tablet na hora
+  async function handleImageUpload(event, cardId) {
+    // Impedir comportamento padrão de reloads forçados no tablet
     event.preventDefault();
     event.stopPropagation();
 
@@ -183,21 +209,20 @@ async function handleImageUpload(event, cardId) {
     if (!editingCard || !editingCard.img) return;
     if (!window.confirm("Remover foto?")) return;
     
-    setLoading(true); // Ativa o loading para bloquear interações repetidas
+    setLoading(true);
     try {
-      // Pega o nome do arquivo corretamente removendo a URL base do bucket
       const fileName = editingCard.img.split('/cards/')[1];
       
       if (fileName) {
         const { error: storageError } = await supabase.storage.from('cards').remove([fileName]);
-        if (storageError) console.error("Aviso no Storage (pode ser que a imagem não existia lá):", storageError);
+        if (storageError) console.error("Aviso no Storage:", storageError);
       }
       
       const { error: dbError } = await supabase.from('collection').update({ image_url: null }).eq('id', editingCard.id);
       if (dbError) throw dbError;
       
       setCards(prev => prev.map(c => c.id === editingCard.id ? { ...c, img: null } : c));
-      setEditingCard(null); // Fecha o modal para resetar o fluxo
+      setEditingCard(null); 
     } catch (error) {
       console.error("Erro ao deletar:", error);
       alert("Erro ao remover a foto.");
@@ -205,6 +230,7 @@ async function handleImageUpload(event, cardId) {
       setLoading(false);
     }
   }
+
   async function saveDescription() {
     if (!editingCard) return;
     try {
@@ -280,7 +306,6 @@ async function handleImageUpload(event, cardId) {
     .sort((a, b) => Number(b.isFavorite) - Number(a.isFavorite));
 
   // --- TELA DE LOGIN (BARREIRA CASO NÃO ESTEJA LOGADO) ---
-// --- TELA DE LOGIN (BARREIRA CASO NÃO ESTEJA LOGADO) ---
   if (!session) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4 font-sans">
@@ -293,7 +318,6 @@ async function handleImageUpload(event, cardId) {
             <p className="text-gray-400 text-sm text-center">Faça login ou crie uma conta para gerenciar seus Photocards.</p>
           </div>
 
-          {/* O FORMULÁRIO CORRIGIDO FICA AQUI EMBAIXO: */}
           <form onSubmit={(e) => e.preventDefault()} className="space-y-4">
             <div>
               <label className="block text-xs font-semibold text-gray-600 uppercase mb-1">E-mail</label>
@@ -305,7 +329,7 @@ async function handleImageUpload(event, cardId) {
             </div>
 
             <div className="flex gap-2 pt-2">
-              <button type="button" onClick={(e) => handleLogin(e)} disabled={authLoading} className="flex-1 bg-purple-600 text-white p-2 rounded-lg font-bold text-sm hover:bg-purple-700 transition-colors disabled:opacity-50">
+              <button type="submit" onClick={(e) => handleLogin(e)} disabled={authLoading} className="flex-1 bg-purple-600 text-white p-2 rounded-lg font-bold text-sm hover:bg-purple-700 transition-colors disabled:opacity-50">
                 {authLoading ? 'Entrando...' : 'Entrar'}
               </button>
               <button type="button" onClick={(e) => handleSignUp(e)} disabled={authLoading} className="flex-1 bg-gray-100 text-gray-700 p-2 rounded-lg font-bold text-sm hover:bg-gray-200 transition-colors disabled:opacity-50">
@@ -317,12 +341,13 @@ async function handleImageUpload(event, cardId) {
       </div>
     );
   }
+
   // --- TELA PRINCIPAL (SÓ APARECE SE ESTIVER LOGADO) ---
   return (
     <div className="min-h-screen bg-gray-50 p-8 font-sans">
       {/* Topbar com botão de Logout */}
       <div className="flex justify-between items-center mb-6">
-        <span className="text-xs text-gray-500 font-medium">Logado como: <strong className="text-gray-700">{session.user.email}</strong></span>
+        <span className="text-xs text-gray-500 font-medium">Logado como: <strong className="text-gray-700">{session.user?.email}</strong></span>
         <button onClick={handleLogout} className="flex items-center gap-2 text-sm text-red-600 hover:bg-red-50 px-3 py-1.5 rounded-lg font-medium transition-colors">
           <LogOut size={16} /> Sair
         </button>
@@ -368,7 +393,7 @@ async function handleImageUpload(event, cardId) {
               ) : (
                 <label className="w-full h-full flex flex-col items-center justify-center text-gray-400 cursor-pointer">
                   <Camera size={24} />
-                  <input type="file" className="hidden" onChange={(e) => handleImageUpload(e, card.id)} />
+                  <input type="file" accept="image/*" className="hidden" onChange={(e) => handleImageUpload(e, card.id)} />
                 </label>
               )}
             </div>
@@ -376,7 +401,7 @@ async function handleImageUpload(event, cardId) {
         </div>
       )}
 
-      {/* MODAL DE EDIÇÃO (Mantido igual) */}
+      {/* MODAL DE EDIÇÃO */}
       {editingCard && (
         <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-xl w-full max-w-sm overflow-hidden relative p-4 space-y-4 max-h-[90vh] overflow-y-auto">
