@@ -38,12 +38,12 @@ export default function KpopCollection() {
 
   // --- CONTROLE DE SESSÃO DO USUÁRIO ---
   useEffect(() => {
-    // Pega a sessão atual ao montar o componente
+    // 1. Verifica se já existe uma sessão salva logo quando a página carrega
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
     });
 
-    // Escuta mudanças no estado de auth (login/logout)
+    // 2. Escuta mudanças de autenticação (login, logout, etc)
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
     });
@@ -57,9 +57,9 @@ export default function KpopCollection() {
     }
   }, [session]);
 
-useEffect(() => {
-    // SÓ roda a busca se a sessão estiver de fato ativa e carregada
-    if (session && session.user) {
+  useEffect(() => {
+    // Só tenta buscar do banco se a sessão estiver carregada e ativa
+    if (session?.user) {
       fetchCollection();
     }
   }, [currentTab, selectedGroup, selectedMember, session]);
@@ -107,7 +107,7 @@ useEffect(() => {
       .select(`*, members (name, groups (name))`)
       .eq('status', currentTab)
       // FILTRA APENAS OS CARDS DO USUÁRIO LOGADO:
-      .eq('user_id', session.user.id); 
+      .eq('user_id', session.user.id);
 
     if (selectedMember && selectedGroup) {
       const { data: memberData } = await supabase
@@ -140,32 +140,32 @@ useEffect(() => {
     setLoading(false);
   }
 
-async function handleImageUpload(event, cardId) {
+  async function handleImageUpload(event, cardId) {
     // 1. IMPORTANTE: Para o comportamento padrão do navegador do tablet na hora
     event.preventDefault();
     event.stopPropagation();
 
     const file = event.target.files[0];
     if (!file) return;
-    
+
     setLoading(true);
     try {
       const fileName = `${session.user.id}/${Date.now()}_${file.name}`;
-      
+
       // Envia para o storage
       const { error: uploadError } = await supabase.storage.from('cards').upload(fileName, file);
       if (uploadError) throw uploadError;
-      
+
       // Pega a URL pública
       const { data: { publicUrl } } = supabase.storage.from('cards').getPublicUrl(fileName);
-      
+
       // Atualiza o banco de dados
       const { error: dbError } = await supabase.from('collection').update({ image_url: publicUrl }).eq('id', cardId);
       if (dbError) throw dbError;
-      
+
       // Atualiza o estado local de forma segura
       setCards(prev => prev.map(card => card.id === cardId ? { ...card, img: publicUrl } : card));
-      
+
       if (editingCard && editingCard.id === cardId) {
         setEditingCard(prev => ({ ...prev, img: publicUrl }));
       }
@@ -182,20 +182,20 @@ async function handleImageUpload(event, cardId) {
   async function handleDeletePhoto() {
     if (!editingCard || !editingCard.img) return;
     if (!window.confirm("Remover foto?")) return;
-    
+
     setLoading(true); // Ativa o loading para bloquear interações repetidas
     try {
       // Pega o nome do arquivo corretamente removendo a URL base do bucket
       const fileName = editingCard.img.split('/cards/')[1];
-      
+
       if (fileName) {
         const { error: storageError } = await supabase.storage.from('cards').remove([fileName]);
         if (storageError) console.error("Aviso no Storage (pode ser que a imagem não existia lá):", storageError);
       }
-      
+
       const { error: dbError } = await supabase.from('collection').update({ image_url: null }).eq('id', editingCard.id);
       if (dbError) throw dbError;
-      
+
       setCards(prev => prev.map(c => c.id === editingCard.id ? { ...c, img: null } : c));
       setEditingCard(null); // Fecha o modal para resetar o fluxo
     } catch (error) {
@@ -280,7 +280,7 @@ async function handleImageUpload(event, cardId) {
     .sort((a, b) => Number(b.isFavorite) - Number(a.isFavorite));
 
   // --- TELA DE LOGIN (BARREIRA CASO NÃO ESTEJA LOGADO) ---
-// --- TELA DE LOGIN (BARREIRA CASO NÃO ESTEJA LOGADO) ---
+  // --- TELA DE LOGIN (BARREIRA CASO NÃO ESTEJA LOGADO) ---
   if (!session) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4 font-sans">
@@ -382,10 +382,10 @@ async function handleImageUpload(event, cardId) {
           <div className="bg-white rounded-xl w-full max-w-sm overflow-hidden relative p-4 space-y-4 max-h-[90vh] overflow-y-auto">
             <button onClick={() => setEditingCard(null)} className="absolute top-2 right-2 text-gray-400"><X size={24} /></button>
             <img src={editingCard.img} className="h-48 w-full object-contain mx-auto" />
-            
+
             <div className="space-y-3">
               <input type="text" value={tempDescription} onChange={(e) => setTempDescription(e.target.value)} className="w-full border p-2 rounded text-sm" placeholder="Descrição/Álbum" />
-              
+
               <div className="grid grid-cols-2 gap-2">
                 <select value={tempStatusPagamento} onChange={(e) => setTempStatusPagamento(e.target.value)} className="border p-2 rounded text-xs">
                   <option value="pendente">Pendente</option><option value="pago">Pago</option>
@@ -426,7 +426,7 @@ async function handleImageUpload(event, cardId) {
               </div>
 
               <button onClick={saveDescription} className="w-full bg-purple-600 text-white p-2 rounded-lg font-bold flex items-center justify-center gap-2">
-                SALVAR <ArrowRight size={16}/>
+                SALVAR <ArrowRight size={16} />
               </button>
             </div>
 
@@ -442,7 +442,7 @@ async function handleImageUpload(event, cardId) {
                   <option value="">Mover...</option>
                   <option value="wishlist">Wishlist</option><option value="on_the_way">A Caminho</option><option value="owned">Coleção</option><option value="ceg">CEG</option>
                 </select>
-                <button onClick={handleMoveStatus} className="bg-blue-600 text-white px-3 rounded"><ArrowRight size={16}/></button>
+                <button onClick={handleMoveStatus} className="bg-blue-600 text-white px-3 rounded"><ArrowRight size={16} /></button>
               </div>
             </div>
           </div>
