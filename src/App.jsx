@@ -140,6 +140,10 @@ export default function KpopCollection() {
   }
 
 async function handleImageUpload(event, cardId) {
+    // 1. IMPORTANTE: Para o comportamento padrão do navegador do tablet na hora
+    event.preventDefault();
+    event.stopPropagation();
+
     const file = event.target.files[0];
     if (!file) return;
     
@@ -147,29 +151,28 @@ async function handleImageUpload(event, cardId) {
     try {
       const fileName = `${session.user.id}/${Date.now()}_${file.name}`;
       
-      // 1. Faz o upload para o Storage
+      // Envia para o storage
       const { error: uploadError } = await supabase.storage.from('cards').upload(fileName, file);
       if (uploadError) throw uploadError;
       
-      // 2. Pega a URL pública
+      // Pega a URL pública
       const { data: { publicUrl } } = supabase.storage.from('cards').getPublicUrl(fileName);
       
-      // 3. Atualiza o Banco de Dados
+      // Atualiza o banco de dados
       const { error: dbError } = await supabase.from('collection').update({ image_url: publicUrl }).eq('id', cardId);
       if (dbError) throw dbError;
       
-      // 4. Atualiza o estado local de forma limpa
+      // Atualiza o estado local de forma segura
       setCards(prev => prev.map(card => card.id === cardId ? { ...card, img: publicUrl } : card));
       
-      // Se o usuário estiver com o modal aberto editando ESSE card, atualiza a prévia do modal também
       if (editingCard && editingCard.id === cardId) {
         setEditingCard(prev => ({ ...prev, img: publicUrl }));
       }
 
-      alert("Imagem enviada com sucesso!");
+      alert("Foto adicionada com sucesso!");
     } catch (error) {
-      console.error("Erro no upload:", error);
-      alert("Falha ao subir imagem: " + error.message);
+      console.error(error);
+      alert("Erro ao subir imagem: " + error.message);
     } finally {
       setLoading(false);
     }
