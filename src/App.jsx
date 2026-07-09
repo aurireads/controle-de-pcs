@@ -1,11 +1,10 @@
 import { useState, useEffect } from 'react';
 import { supabase } from './supabase';
-import { Camera, ChevronDown, X, Trash2, ArrowRight, Heart, LogOut, Lock } from 'lucide-react';
+import { Camera, ChevronDown, ChevronRight, X, Trash2, ArrowRight, Heart, LogOut, Lock } from 'lucide-react';
 
 export default function KpopCollection() {
   // --- ESTADOS DE AUTENTICAÇÃO ---
   const [session, setSession] = useState(() => {
-    // Inicialização segura para evitar que o React limpe seu login por milissegundos no F5
     const saved = Object.keys(localStorage).find(key => key.startsWith('sb-') && key.endsWith('-auth-token'));
     return saved ? JSON.parse(localStorage.getItem(saved)) : null;
   });
@@ -20,6 +19,9 @@ export default function KpopCollection() {
   const [cards, setCards] = useState([]);
   const [groupsData, setGroupsData] = useState({});
   const [loading, setLoading] = useState(false);
+
+  // Estado para controlar quais grupos estão abertos (dropdown) na barra lateral
+  const [openGroups, setOpenGroups] = useState({});
 
   // Estados do Modal
   const [editingCard, setEditingCard] = useState(null);
@@ -42,12 +44,10 @@ export default function KpopCollection() {
 
   // --- CONTROLE DE SESSÃO DO USUÁRIO ---
   useEffect(() => {
-    // Pega a sessão atual ao montar o componente de forma assíncrona
     supabase.auth.getSession().then(({ data: { session: currentSession } }) => {
       if (currentSession) setSession(currentSession);
     });
 
-    // Escuta mudanças estritas no estado de auth (login/logout reais)
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, currentSession) => {
       if (event === 'SIGNED_IN') {
         setSession(currentSession);
@@ -67,12 +67,10 @@ export default function KpopCollection() {
   }, [session]);
 
   useEffect(() => {
-    // SÓ roda se a sessão estiver de fato ativa e carregada
     if (session?.user?.id) {
       fetchCollection();
     }
-  }, [currentTab, selectedGroup, selectedMember]); // REMOVIDO o 'session' daqui para evitar recarregamentos infinitos ao mudar de tela
-
+  }, [currentTab, selectedGroup, selectedMember]);
 
   // --- FUNÇÕES DE AUTENTICAÇÃO ---
   async function handleLogin(e) {
@@ -98,7 +96,7 @@ export default function KpopCollection() {
       await supabase.auth.signOut();
       setSession(null);
       setCards([]);
-      localStorage.clear(); // Limpa as travas persistentes do navegador
+      localStorage.clear();
     } catch (error) {
       console.error(error);
     } finally {
@@ -127,7 +125,7 @@ export default function KpopCollection() {
         .from('collection')
         .select(`*, members (name, groups (name))`)
         .eq('status', currentTab)
-        .eq('user_id', session.user.id); 
+        .eq('user_id', session.user.id);
 
       if (selectedMember && selectedGroup) {
         const { data: memberData } = await supabase
@@ -139,6 +137,16 @@ export default function KpopCollection() {
 
         if (memberData) {
           query = query.eq('member_id', memberData.id);
+        }
+      } else if (selectedGroup) {
+        const { data: membersInGroup } = await supabase
+          .from('members')
+          .select('id, groups!inner(name)')
+          .eq('groups.name', selectedGroup);
+
+        if (membersInGroup) {
+          const ids = membersInGroup.map(m => m.id);
+          query = query.in('member_id', ids);
         }
       }
 
@@ -167,31 +175,24 @@ export default function KpopCollection() {
   }
 
   async function handleImageUpload(event, cardId) {
-    // Impedir comportamento padrão de reloads forçados no tablet
     event.preventDefault();
     event.stopPropagation();
 
     const file = event.target.files[0];
     if (!file) return;
-    
+
     setLoading(true);
     try {
       const fileName = `${session.user.id}/${Date.now()}_${file.name}`;
-      
-      // Envia para o storage
       const { error: uploadError } = await supabase.storage.from('cards').upload(fileName, file);
       if (uploadError) throw uploadError;
-      
-      // Pega a URL pública
+
       const { data: { publicUrl } } = supabase.storage.from('cards').getPublicUrl(fileName);
-      
-      // Atualiza o banco de dados
       const { error: dbError } = await supabase.from('collection').update({ image_url: publicUrl }).eq('id', cardId);
       if (dbError) throw dbError;
-      
-      // Atualiza o estado local de forma segura
+
       setCards(prev => prev.map(card => card.id === cardId ? { ...card, img: publicUrl } : card));
-      
+
       if (editingCard && editingCard.id === cardId) {
         setEditingCard(prev => ({ ...prev, img: publicUrl }));
       }
@@ -208,21 +209,20 @@ export default function KpopCollection() {
   async function handleDeletePhoto() {
     if (!editingCard || !editingCard.img) return;
     if (!window.confirm("Remover foto?")) return;
-    
+
     setLoading(true);
     try {
       const fileName = editingCard.img.split('/cards/')[1];
-      
       if (fileName) {
         const { error: storageError } = await supabase.storage.from('cards').remove([fileName]);
         if (storageError) console.error("Aviso no Storage:", storageError);
       }
-      
+
       const { error: dbError } = await supabase.from('collection').update({ image_url: null }).eq('id', editingCard.id);
       if (dbError) throw dbError;
-      
+
       setCards(prev => prev.map(c => c.id === editingCard.id ? { ...c, img: null } : c));
-      setEditingCard(null); 
+      setEditingCard(null);
     } catch (error) {
       console.error("Erro ao deletar:", error);
       alert("Erro ao remover a foto.");
@@ -301,17 +301,24 @@ export default function KpopCollection() {
     setMoveToMember('');
   }
 
+  const toggleGroupDropdown = (groupName) => {
+    setOpenGroups(prev => ({
+      ...prev,
+      [groupName]: !prev[groupName]
+    }));
+  };
+
   const filteredCards = cards
     .filter(card => (selectedGroup ? card.group === selectedGroup : true) && (selectedMember ? card.member === selectedMember : true))
     .sort((a, b) => Number(b.isFavorite) - Number(a.isFavorite));
 
-  // --- TELA DE LOGIN (BARREIRA CASO NÃO ESTEJA LOGADO) ---
+  // --- TELA DE LOGIN ---
   if (!session) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4 font-sans">
+      <div className="min-h-screen bg-[#086c79] flex items-center justify-center p-4 font-sans">
         <div className="bg-white p-8 rounded-xl shadow-md border max-w-sm w-full space-y-6">
           <div className="flex flex-col items-center space-y-2">
-            <div className="bg-purple-100 p-3 rounded-full text-purple-600">
+            <div className="bg-[#282828] p-3 rounded-full text-white">
               <Lock size={32} />
             </div>
             <h2 className="text-2xl font-bold text-gray-800">Minha Coleção K-Pop</h2>
@@ -342,132 +349,254 @@ export default function KpopCollection() {
     );
   }
 
-  // --- TELA PRINCIPAL (SÓ APARECE SE ESTIVER LOGADO) ---
+  // --- TELA PRINCIPAL (COM AS CORES ATUALIZADAS) ---
   return (
-    <div className="min-h-screen bg-gray-50 p-8 font-sans">
+    <div className="min-h-screen bg-[#b8b0b0] p-4 md:p-8 font-sans flex flex-col"> {/* COR DE FUNDO GERAL MUDADA PARA #806c79 */}
+
       {/* Topbar com botão de Logout */}
-      <div className="flex justify-between items-center mb-6">
-        <span className="text-xs text-gray-500 font-medium">Logado como: <strong className="text-gray-700">{session.user?.email}</strong></span>
-        <button onClick={handleLogout} className="flex items-center gap-2 text-sm text-red-600 hover:bg-red-50 px-3 py-1.5 rounded-lg font-medium transition-colors">
-          <LogOut size={16} /> Sair
-        </button>
-      </div>
 
-      <div className="flex justify-center space-x-8 mb-10 border-b pb-4">
-        {['wishlist', 'on_the_way', 'owned', 'ceg'].map((tab) => (
-          <button key={tab} onClick={() => setCurrentTab(tab)} className={`text-lg font-medium capitalize pb-2 transition-colors ${currentTab === tab ? 'text-purple-600 border-b-2 border-purple-600' : 'text-gray-400'}`}>
-            {tab.replace(/_/g, ' ').toUpperCase()}
-          </button>
-        ))}
-      </div>
 
-      <div className="flex gap-4 mb-8">
-        <select className="bg-white border rounded-lg py-2 px-4 pr-8" value={selectedGroup} onChange={(e) => { setSelectedGroup(e.target.value); setSelectedMember(''); }}>
-          <option value="">Todos os Grupos</option>
-          {Object.keys(groupsData).map(g => <option key={g} value={g}>{g}</option>)}
-        </select>
-        <select className="bg-white border rounded-lg py-2 px-4 pr-8" value={selectedMember} onChange={(e) => setSelectedMember(e.target.value)} disabled={!selectedGroup}>
-          <option value="">Todos os Membros</option>
-          {selectedGroup && groupsData[selectedGroup]?.map(m => <option key={m} value={m}>{m}</option>)}
-        </select>
-      </div>
+      {/* CONTAINER PRINCIPAL EM GRID */}
+      <div className="flex flex-col md:flex-row gap-6 items-start flex-1">
 
-      {currentTab === 'ceg' && (
-        <div className="flex justify-end mb-6">
-          <a href="/cegs" target="_blank" className="bg-purple-600 text-white px-4 py-2 rounded-lg font-bold">ABRIR PÁGINA DE CEGS</a>
+        {/* 1ª DIV: BARRA LATERAL - MUDADA PARA A COR DE FUNDO #4a3f4b */}
+        <div className="w-full md:w-64 bg-[#282828] rounded-xl shadow-sm border border-[#282828] p-4 self-stretch min-h-[300px]">
+          <div className="flex items-center justify-between mb-4 pb-2 border-b border-[#282828]">
+            <h3 className="font-bold text-white text-sm tracking-wide uppercase">▼ Groups</h3>
+            {(selectedGroup || selectedMember) && (
+              <button
+                onClick={() => { setSelectedGroup(''); setSelectedMember(''); }}
+                className="text-xs text-purple-300 hover:underline font-medium"
+              >
+                Limpar Filtro
+              </button>
+            )}
+          </div>
+
+          <div className="space-y-1">
+            {Object.keys(groupsData)
+              .filter(group => group !== 'Geral' && group !== 'A Organizar')
+              .map((group) => {
+                const isGroupOpen = !!openGroups[group];
+                const isGroupSelected = selectedGroup === group;
+
+                return (
+                  <div key={group} className="rounded-lg overflow-hidden">
+                    {/* Botão do Grupo */}
+                    <button
+                      onClick={() => {
+                        toggleGroupDropdown(group);
+                        setSelectedGroup(group);
+                        setSelectedMember('');
+                      }}
+                      className={`w-full flex items-center justify-between p-2 text-sm font-medium transition-colors rounded-md text-left ${isGroupSelected
+                          ? 'bg-[#5e5160] text-purple-200 font-semibold border-l-4 border-purple-400 pl-1'
+                          : 'text-gray-200 hover:bg-[#484048]'
+                        }`}
+                    >
+                      <span className="flex items-center gap-2">
+                        {isGroupOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                        {group}
+                      </span>
+                    </button>
+
+                    {/* Dropdown de Membros deste Grupo */}
+                    {isGroupOpen && (
+                      <div className="pl-6 pr-2 py-1 space-y-1 bg-[#413742] rounded-b-md border-l-2 border-purple-400 ml-3 mt-1">
+                        <button
+                          onClick={() => setSelectedMember('')}
+                          className={`w-full text-left text-xs p-1.5 rounded transition-colors ${isGroupSelected && !selectedMember
+                              ? 'text-purple-300 font-bold'
+                              : 'text-gray-300 hover:text-white'
+                            }`}
+                        >
+                          • Todos os membros
+                        </button>
+
+                        {groupsData[group]?.map((member) => {
+                          const isMemberSelected = selectedMember === member;
+                          return (
+                            <button
+                              key={member}
+                              onClick={() => {
+                                setSelectedGroup(group);
+                                setSelectedMember(member);
+                              }}
+                              className={`w-full text-left text-xs p-1.5 rounded transition-colors block ${isMemberSelected
+                                  ? 'bg-[#5e5160] text-purple-200 font-bold'
+                                  : 'text-gray-300 hover:text-white hover:bg-[#4d414e]'
+                                }`}
+                            >
+                              • {member}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+          </div>
+          <div className="flex justify-between items-center mb-6 p-4 rounded-xl ">
+            <button onClick={handleLogout} className="ml-auto flex items-center gap-2 text-sm text-white px-3 py-1.5 rounded-lg font-medium transition-colors">          <LogOut size={16} /> Sair
+            </button>
+          </div>
         </div>
-      )}
 
-      {loading ? (
-        <div className="text-center py-10 text-gray-500">Carregando itens...</div>
-      ) : (
-        <div className="grid grid-cols-3 md:grid-cols-6 lg:grid-cols-7 gap-3">
-          {filteredCards.map((card) => (
-            <div key={card.id} className="aspect-[2/3] bg-white rounded-lg shadow-sm border p-2 relative group overflow-hidden">
-              {card.isFavorite && <div className="absolute top-1 right-1 z-10 bg-pink-500 rounded-full p-1"><Heart size={12} fill="white" className="text-white" /></div>}
-              {card.img ? (
-                <div onClick={() => openEditModal(card)} className="w-full h-full cursor-pointer">
-                  <img src={card.img} className="w-full h-full object-cover rounded" />
-                  {card.description && <div className="absolute bottom-0 w-full bg-black/60 text-white text-[10px] p-1 text-center truncate">{card.description}</div>}
-                </div>
-              ) : (
-                <label className="w-full h-full flex flex-col items-center justify-center text-gray-400 cursor-pointer">
-                  <Camera size={24} />
-                  <input type="file" accept="image/*" className="hidden" onChange={(e) => handleImageUpload(e, card.id)} />
-                </label>
-              )}
+        {/* 2ª DIV: ÁREA DE CONTEÚDO PRINCIPAL (BRANCA PARA DESTAQUE DOS CARDS) */}
+        <div className="flex-1 bg-[#e5dee1] rounded-xl shadow-sm border p-6 w-full self-stretch flex flex-col">
+
+          {/* MENU DE ABAS SUPERIOR */}
+          <div className="flex justify-start space-x-6 mb-6  pb-2 overflow-x-auto whitespace-nowrap scrollbar-none">
+            {[
+              { id: 'wishlist', label: 'Wishlist' },
+              { id: 'on_the_way', label: 'OTW' },
+              { id: 'owned', label: 'Owned' },
+              { id: 'ceg', label: 'CEGs' }
+            ].map((tab) => (
+              <button
+                key={tab.id}
+                onClick={() => setCurrentTab(tab.id)}
+                className={`text-base font-semibold pb-2 transition-colors  px-1 ${currentTab === tab.id
+                    ? ' border-purple-600'
+                    : 'text-gray-400 border-transparent hover:text-gray-600'
+                  }`}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
+
+          {currentTab === 'ceg' && (
+            <div className="flex justify-end mb-4">
+              <a href="/cegs" target="_blank" className="bg-[#282828] text-white px-4 py-1.5 rounded-lg text-xs font-bold  transition-colors">
+                ABRIR PÁGINA DE CEGS
+              </a>
             </div>
-          ))}
+          )}
+
+          {/* GRID DE PHOTOCARDS */}
+          <div className="flex-1">
+            {loading ? (
+              <div className="text-center py-10 text-gray-400 text-sm">Carregando itens...</div>
+            ) : filteredCards.length === 0 ? (
+              <div className="text-center py-10 text-gray-400 text-sm  rounded-xl">
+                Nenhum photocard encontrado para os filtros selecionados nesta aba.
+              </div>
+            ) : (
+              <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-7 gap-3">
+                {filteredCards.map((card) => (
+                  <div key={card.id} className="aspect-[2/3] bg-gray-50 rounded-lg shadow-sm  p-1 relative group overflow-hidden hover:border-purple-300 transition-all">
+                    {card.isFavorite && (
+                      <div className="absolute top-1 right-1 z-10 bg-pink-500 rounded-full p-1 shadow-sm">
+                        <Heart size={10} fill="white" className="text-white" />
+                      </div>
+                    )}
+                    {card.img ? (
+                      <div onClick={() => openEditModal(card)} className="w-full h-full cursor-pointer relative">
+                        <img src={card.img} className="w-full h-full object-cover rounded" alt="" />
+                        {card.description && (
+                          <div className="absolute bottom-0 left-0 right-0 bg-black/60 text-white text-[10px] p-1 text-center truncate rounded-b">
+                            {card.description}
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <label className="w-full h-full flex flex-col items-center justify-center text-gray-400 cursor-pointer hover:bg-gray-100 transition-colors rounded">
+                        <Camera size={20} />
+                        <span className="text-[10px] mt-1">Add Foto</span>
+                        <input type="file" accept="image/*" className="hidden" onChange={(e) => handleImageUpload(e, card.id)} />
+                      </label>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
         </div>
-      )}
+      </div>
 
       {/* MODAL DE EDIÇÃO */}
       {editingCard && (
-        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl w-full max-w-sm overflow-hidden relative p-4 space-y-4 max-h-[90vh] overflow-y-auto">
-            <button onClick={() => setEditingCard(null)} className="absolute top-2 right-2 text-gray-400"><X size={24} /></button>
-            <img src={editingCard.img} className="h-48 w-full object-contain mx-auto" />
-            
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
+          <div className="bg-white rounded-xl w-full max-w-sm overflow-hidden relative p-4 space-y-4 max-h-[90vh] overflow-y-auto shadow-xl">
+            <button onClick={() => setEditingCard(null)} className="absolute top-2 right-2 text-gray-400 hover:text-gray-600"><X size={24} /></button>
+            <img src={editingCard.img} className="h-48 w-full object-contain mx-auto rounded-lg bg-gray-50" />
+
             <div className="space-y-3">
-              <input type="text" value={tempDescription} onChange={(e) => setTempDescription(e.target.value)} className="w-full border p-2 rounded text-sm" placeholder="Descrição/Álbum" />
-              
+              <div>
+                <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Descrição / Álbum</label>
+                <input type="text" value={tempDescription} onChange={(e) => setTempDescription(e.target.value)} className="w-full  p-2 rounded text-sm" placeholder="Ex: Feel Special Holo" />
+              </div>
+
               <div className="grid grid-cols-2 gap-2">
-                <select value={tempStatusPagamento} onChange={(e) => setTempStatusPagamento(e.target.value)} className="border p-2 rounded text-xs">
-                  <option value="pendente">Pendente</option><option value="pago">Pago</option>
-                </select>
-                <input type="number" value={tempValor} onChange={(e) => setTempValor(e.target.value)} className="border p-2 rounded text-xs" placeholder="Valor Item" />
+                <div>
+                  <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Pagamento</label>
+                  <select value={tempStatusPagamento} onChange={(e) => setTempStatusPagamento(e.target.value)} className="w-full  p-2 rounded text-xs bg-white">
+                    <option value="pendente">Pendente</option><option value="pago">Pago</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Valor Item</label>
+                  <input type="number" value={tempValor} onChange={(e) => setTempValor(e.target.value)} className="w-full  p-2 rounded text-xs" placeholder="R$ 0,00" />
+                </div>
               </div>
 
-              <div className="bg-purple-50 p-3 rounded-lg space-y-2">
+              <div className="bg-[#282828] p-3 rounded-lg space-y-2  border-purple-100">
+                <span className="block text-[10px] font-bold text-purple-700 uppercase tracking-wider">Taxas & Fretes</span>
                 <div className="grid grid-cols-2 gap-2">
                   <div className="flex gap-1">
-                    <input type="number" value={tempTaxa} onChange={(e) => setTempTaxa(e.target.value)} className="w-full border p-1 rounded text-xs" placeholder="Taxa 1" />
-                    <select value={tempStatusTaxa1} onChange={(e) => setTempStatusTaxa1(e.target.value)} className="border rounded text-[10px]">
+                    <input type="number" value={tempTaxa} onChange={(e) => setTempTaxa(e.target.value)} className="w-full border p-1 rounded text-xs bg-white" placeholder="Taxa 1" />
+                    <select value={tempStatusTaxa1} onChange={(e) => setTempStatusTaxa1(e.target.value)} className="border rounded text-[10px] bg-white">
                       <option value="pendente">P</option><option value="pago">OK</option>
                     </select>
                   </div>
                   <div className="flex gap-1">
-                    <input type="number" value={temptaxa2} onChange={(e) => setTemptaxa2(e.target.value)} className="w-full border p-1 rounded text-xs" placeholder="Taxa 2" />
-                    <select value={tempStatusTaxa2} onChange={(e) => setTempStatusTaxa2(e.target.value)} className="border rounded text-[10px]">
+                    <input type="number" value={temptaxa2} onChange={(e) => setTemptaxa2(e.target.value)} className="w-full border p-1 rounded text-xs bg-white" placeholder="Taxa 2" />
+                    <select value={tempStatusTaxa2} onChange={(e) => setTempStatusTaxa2(e.target.value)} className="border rounded text-[10px] bg-white">
                       <option value="pendente">P</option><option value="pago">OK</option>
                     </select>
                   </div>
                 </div>
                 <div className="grid grid-cols-2 gap-2">
                   <div className="flex gap-1">
-                    <input type="number" value={tempFrete} onChange={(e) => setTempFrete(e.target.value)} className="w-full border p-1 rounded text-xs" placeholder="Frete 1" />
-                    <select value={tempStatusFrete1} onChange={(e) => setTempStatusFrete1(e.target.value)} className="border rounded text-[10px]">
+                    <input type="number" value={tempFrete} onChange={(e) => setTempFrete(e.target.value)} className="w-full border p-1 rounded text-xs bg-white" placeholder="Frete 1" />
+                    <select value={tempStatusFrete1} onChange={(e) => setTempStatusFrete1(e.target.value)} className="border rounded text-[10px] bg-white">
                       <option value="pendente">P</option><option value="pago">OK</option>
                     </select>
                   </div>
                   <div className="flex gap-1">
-                    <input type="number" value={tempfrete2} onChange={(e) => setTempfrete2(e.target.value)} className="w-full border p-1 rounded text-xs" placeholder="Frete 2" />
-                    <select value={tempStatusFrete2} onChange={(e) => setTempStatusFrete2(e.target.value)} className="border rounded text-[10px]">
+                    <input type="number" value={tempfrete2} onChange={(e) => setTempfrete2(e.target.value)} className="w-full border p-1 rounded text-xs bg-white" placeholder="Frete 2" />
+                    <select value={tempStatusFrete2} onChange={(e) => setTempStatusFrete2(e.target.value)} className="border rounded text-[10px] bg-white">
                       <option value="pendente">P</option><option value="pago">OK</option>
                     </select>
                   </div>
                 </div>
-                <input type="text" value={tempNomeCeg} onChange={(e) => setTempNomeCeg(e.target.value)} className="w-full border p-2 rounded text-xs" placeholder="ID da CEG" />
+                <input type="text" value={tempNomeCeg} onChange={(e) => setTempNomeCeg(e.target.value)} className="w-full border p-2 rounded text-xs bg-white" placeholder="ID ou Código da CEG" />
               </div>
 
-              <button onClick={saveDescription} className="w-full bg-purple-600 text-white p-2 rounded-lg font-bold flex items-center justify-center gap-2">
-                SALVAR <ArrowRight size={16}/>
+              <button onClick={saveDescription} className="w-full bg-[#282828] hover:bg-purple-700 text-white p-2.5 rounded-lg font-bold flex items-center justify-center gap-2 transition-colors shadow-sm">
+                SALVAR <ArrowRight size={16} />
               </button>
             </div>
 
             <div className="flex gap-2 pt-2 border-t">
-              <button onClick={handleToggleFavorite} className={`flex-1 p-2 rounded ${editingCard.isFavorite ? 'bg-pink-500 text-white' : 'bg-pink-100 text-pink-600'}`}><Heart size={20} fill={editingCard.isFavorite ? 'white' : 'none'} /></button>
-              <button onClick={handleDeletePhoto} className="flex-1 bg-red-100 text-red-600 p-2 rounded"><Trash2 size={20} /></button>
+              <button onClick={handleToggleFavorite} className={`flex-1 p-2 rounded flex justify-center transition-colors ${editingCard.isFavorite ? 'bg-pink-500 text-white' : 'bg-pink-100 text-pink-600 hover:bg-pink-200'}`}><Heart size={20} fill={editingCard.isFavorite ? 'white' : 'none'} /></button>
+              <button onClick={handleDeletePhoto} className="flex-1 bg-red-100 text-red-600 p-2 rounded flex justify-center hover:bg-red-200 transition-colors"><Trash2 size={20} /></button>
             </div>
 
-            <div className="space-y-2 pt-2">
-              <label className="block text-[10px] font-bold text-gray-500 uppercase">Trocar Status</label>
+            <div className="space-y-1.5 pt-2 border-t">
+              <label className="block text-[10px] font-bold text-gray-500 uppercase">Mover de Categoria</label>
               <div className="flex gap-2">
-                <select value={moveToStatus} onChange={(e) => setMoveToStatus(e.target.value)} className="flex-1 border rounded p-1 text-sm">
-                  <option value="">Mover...</option>
-                  <option value="wishlist">Wishlist</option><option value="on_the_way">A Caminho</option><option value="owned">Coleção</option><option value="ceg">CEG</option>
+                <select value={moveToStatus} onChange={(e) => setMoveToStatus(e.target.value)} className="flex-1 border rounded p-1.5 text-sm bg-white">
+                  <option value="">Mover para...</option>
+                  <option value="wishlist">Wishlist</option>
+                  <option value="on_the_way">A Caminho (OTW)</option>
+                  <option value="owned">Coleção (Owned)</option>
+                  <option value="ceg">CEG</option>
                 </select>
-                <button onClick={handleMoveStatus} className="bg-blue-600 text-white px-3 rounded"><ArrowRight size={16}/></button>
+                <button onClick={handleMoveStatus} className="bg-blue-600 hover:bg-blue-700 text-white px-3 rounded transition-colors"><ArrowRight size={16} /></button>
               </div>
             </div>
           </div>
