@@ -347,7 +347,7 @@ export default function AlbumWishlistPage() {
                                     value={editForm.description}
                                     onChange={e => setEditForm({ ...editForm, description: e.target.value })}
                                     className="w-full border border-pink-200 p-2 rounded-xl text-sm focus:outline-pink-400"
-                                    placeholder="Ex: CAIXINHA EUA #4"
+                                    placeholder=""
                                 />
                             </div>
 
