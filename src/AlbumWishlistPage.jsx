@@ -284,7 +284,7 @@ export default function AlbumWishlistPage() {
                                 return (
                                     <div
                                         key={card.id}
-                                        className="aspect-[3/4] bg-[#fdf8fa] rounded-2xl border-2 border-pink-100 hover:border-pink-300 shadow-xs relative overflow-hidden group hover:shadow-md transition-all flex flex-col items-center justify-center"
+                                        className="aspect-square bg-[#fdf8fa] rounded-2xl border-2 border-pink-100 hover:border-pink-300 shadow-xs relative overflow-hidden group hover:shadow-md transition-all flex flex-col items-center justify-center"
                                     >
                                         {hasMainImage ? (
                                             /* CARD COM FOTO PREENCHIDA */
