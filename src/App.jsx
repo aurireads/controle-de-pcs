@@ -447,30 +447,51 @@ export default function KpopCollection() {
         <div className="flex-1 bg-[#e5dee1] rounded-xl shadow-sm border p-6 w-full self-stretch flex flex-col">
 
           {/* MENU DE ABAS SUPERIOR */}
-          <div className="flex justify-start space-x-6 mb-6  pb-2 overflow-x-auto whitespace-nowrap scrollbar-none">
+{/* MENU DE ABAS SUPERIOR */}
+          <div className="flex justify-start space-x-6 mb-6 pb-2 overflow-x-auto whitespace-nowrap scrollbar-none">
             {[
               { id: 'wishlist', label: 'Wishlist' },
               { id: 'on_the_way', label: 'OTW' },
               { id: 'owned', label: 'Owned' },
-              { id: 'ceg', label: 'CEGs' }
+              { id: 'ceg', label: 'CEGs' },
+              { id: 'album_wishlist', label: 'Wishlist Álbuns' }
             ].map((tab) => (
               <button
                 key={tab.id}
                 onClick={() => setCurrentTab(tab.id)}
-                className={`text-base font-semibold pb-2 transition-colors  px-1 ${currentTab === tab.id
-                    ? ' border-purple-600'
+                className={`text-base font-semibold pb-2 transition-colors px-1 ${
+                  currentTab === tab.id
+                    ? 'border-b-2 border-purple-600 text-purple-600 font-bold'
                     : 'text-gray-400 border-transparent hover:text-gray-600'
-                  }`}
+                }`}
               >
                 {tab.label}
               </button>
             ))}
           </div>
 
+          {/* BOTÃO PARA ABRIR PÁGINA SEPARADA DA CEG */}
           {currentTab === 'ceg' && (
             <div className="flex justify-end mb-4">
-              <a href="/cegs" target="_blank" className="bg-[#282828] text-white px-4 py-1.5 rounded-lg text-xs font-bold  transition-colors">
+              <a 
+                href="/cegs" 
+                target="_blank" 
+                className="bg-[#282828] text-white px-4 py-1.5 rounded-lg text-xs font-bold transition-colors hover:bg-black"
+              >
                 ABRIR PÁGINA DE CEGS
+              </a>
+            </div>
+          )}
+
+          {/* BOTÃO PARA ABRIR PÁGINA SEPARADA DA WISHLIST DE ÁLBUNS */}
+          {currentTab === 'album_wishlist' && (
+            <div className="flex justify-end mb-4">
+              <a 
+                href="/album-wishlist" 
+                target="_blank" 
+                className="bg-[#282828] text-white px-4 py-1.5 rounded-lg text-xs font-bold transition-colors hover:bg-black"
+              >
+                ABRIR PÁGINA DE WISHLIST
               </a>
             </div>
           )}
@@ -480,13 +501,13 @@ export default function KpopCollection() {
             {loading ? (
               <div className="text-center py-10 text-gray-400 text-sm">Carregando itens...</div>
             ) : filteredCards.length === 0 ? (
-              <div className="text-center py-10 text-gray-400 text-sm  rounded-xl">
+              <div className="text-center py-10 text-gray-400 text-sm rounded-xl">
                 Nenhum photocard encontrado para os filtros selecionados nesta aba.
               </div>
             ) : (
               <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-7 gap-3">
                 {filteredCards.map((card) => (
-                  <div key={card.id} className="aspect-[2/3] bg-gray-50 rounded-lg shadow-sm  p-1 relative group overflow-hidden hover:border-purple-300 transition-all">
+                  <div key={card.id} className="aspect-[2/3] bg-gray-50 rounded-lg shadow-sm p-1 relative group overflow-hidden hover:border-purple-300 transition-all">
                     {card.isFavorite && (
                       <div className="absolute top-1 right-1 z-10 bg-pink-500 rounded-full p-1 shadow-sm">
                         <Heart size={10} fill="white" className="text-white" />
@@ -527,24 +548,24 @@ export default function KpopCollection() {
             <div className="space-y-3">
               <div>
                 <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Descrição / Álbum</label>
-                <input type="text" value={tempDescription} onChange={(e) => setTempDescription(e.target.value)} className="w-full  p-2 rounded text-sm" placeholder="Ex: Feel Special Holo" />
+                <input type="text" value={tempDescription} onChange={(e) => setTempDescription(e.target.value)} className="w-full border p-2 rounded text-sm" placeholder="Ex: Feel Special Holo" />
               </div>
 
               <div className="grid grid-cols-2 gap-2">
                 <div>
                   <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Pagamento</label>
-                  <select value={tempStatusPagamento} onChange={(e) => setTempStatusPagamento(e.target.value)} className="w-full  p-2 rounded text-xs bg-white">
+                  <select value={tempStatusPagamento} onChange={(e) => setTempStatusPagamento(e.target.value)} className="w-full border p-2 rounded text-xs bg-white">
                     <option value="pendente">Pendente</option><option value="pago">Pago</option>
                   </select>
                 </div>
                 <div>
                   <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Valor Item</label>
-                  <input type="number" value={tempValor} onChange={(e) => setTempValor(e.target.value)} className="w-full  p-2 rounded text-xs" placeholder="R$ 0,00" />
+                  <input type="number" value={tempValor} onChange={(e) => setTempValor(e.target.value)} className="w-full border p-2 rounded text-xs" placeholder="R$ 0,00" />
                 </div>
               </div>
 
-              <div className="bg-[#282828] p-3 rounded-lg space-y-2  border-purple-100">
-                <span className="block text-[10px] font-bold text-purple-700 uppercase tracking-wider">Taxas & Fretes</span>
+              <div className="bg-[#282828] p-3 rounded-lg space-y-2 border-purple-100">
+                <span className="block text-[10px] font-bold text-purple-300 uppercase tracking-wider">Taxas & Fretes</span>
                 <div className="grid grid-cols-2 gap-2">
                   <div className="flex gap-1">
                     <input type="number" value={tempTaxa} onChange={(e) => setTempTaxa(e.target.value)} className="w-full border p-1 rounded text-xs bg-white" placeholder="Taxa 1" />
@@ -595,6 +616,7 @@ export default function KpopCollection() {
                   <option value="on_the_way">A Caminho (OTW)</option>
                   <option value="owned">Coleção (Owned)</option>
                   <option value="ceg">CEG</option>
+                  <option value="album_wishlist">Wishlist Álbuns</option>
                 </select>
                 <button onClick={handleMoveStatus} className="bg-blue-600 hover:bg-blue-700 text-white px-3 rounded transition-colors"><ArrowRight size={16} /></button>
               </div>
