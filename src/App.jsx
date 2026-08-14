@@ -153,7 +153,7 @@ export default function KpopCollection() {
       const { data: collection, error } = await query
         .order('image_url', { ascending: false, nullsFirst: false })
         .order('created_at', { ascending: false })
-        .limit(1000);
+        .limit(3000);
 
       if (error) throw error;
 
