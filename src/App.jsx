@@ -634,29 +634,7 @@ export default function KpopCollection() {
             <button onClick={() => setEditingCard(null)} className="absolute top-2 right-2 text-gray-400 hover:text-gray-600"><X size={24} /></button>
             <img src={editingCard.img} className="h-48 w-full object-contain mx-auto rounded-lg bg-gray-50" />
 
-            <div className="space-y-3">
-              <div className="flex items-center justify-between gap-2">
-                <span className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Fotos extras</span>
-                <label className="cursor-pointer bg-gradient-to-r from-pink-500 to-rose-500 text-white px-3 py-2 rounded-xl text-[10px] font-black uppercase shadow-md hover:from-pink-600 hover:to-rose-600 transition-all">
-                  + adicionar várias
-                  <input type="file" accept="image/*" multiple className="hidden" onChange={handleExtraImagesUpload} />
-                </label>
-              </div>
 
-              <div className="grid grid-cols-3 gap-2">
-                {(editingCard.extra_images || []).length > 0 ? (
-                  (editingCard.extra_images || []).map((imgUrl, index) => (
-                    <a key={index} href={imgUrl} target="_blank" rel="noreferrer" className="block aspect-square rounded-lg overflow-hidden border border-gray-200 bg-gray-50">
-                      <img src={imgUrl} alt="" className="w-full h-full object-cover" />
-                    </a>
-                  ))
-                ) : (
-                  <div className="col-span-3 text-center text-[10px] text-gray-400 py-3 border border-dashed border-gray-200 rounded-lg">
-                    Nenhuma foto extra adicionada
-                  </div>
-                )}
-              </div>
-            </div>
 
             <div className="space-y-3">
               <div>
