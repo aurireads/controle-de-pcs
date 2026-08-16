@@ -161,6 +161,7 @@ export default function KpopCollection() {
         const formatted = collection.map(item => ({
           ...item,
           img: item.image_url,
+          extra_images: item.extra_images || [],
           member: item.members?.name,
           group: item.members?.groups?.name,
           isFavorite: item.is_favorite
@@ -196,11 +197,89 @@ export default function KpopCollection() {
       if (editingCard && editingCard.id === cardId) {
         setEditingCard(prev => ({ ...prev, img: publicUrl }));
       }
-
-      alert("Foto adicionada com sucesso!");
     } catch (error) {
       console.error(error);
       alert("Erro ao subir imagem: " + error.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleExtraImagesUpload(event) {
+    const files = Array.from(event.target.files || []);
+    if (!files.length || !editingCard) return;
+
+    setLoading(true);
+    try {
+      const uploadedUrls = [];
+
+      for (const file of files) {
+        const fileName = `${session.user.id}/extra_${Date.now()}_${Math.random().toString(36).slice(2)}_${file.name}`;
+        const { error: uploadError } = await supabase.storage.from('cards').upload(fileName, file);
+        if (uploadError) throw uploadError;
+
+        const { data: { publicUrl } } = supabase.storage.from('cards').getPublicUrl(fileName);
+        uploadedUrls.push(publicUrl);
+      }
+
+      const updatedExtraPhotos = [...(editingCard.extra_images || []), ...uploadedUrls];
+
+      const { error: dbError } = await supabase
+        .from('collection')
+        .update({ extra_images: updatedExtraPhotos })
+        .eq('id', editingCard.id);
+
+      if (dbError) throw dbError;
+
+      setCards(prev => prev.map(card => card.id === editingCard.id ? { ...card, extra_images: updatedExtraPhotos } : card));
+      setEditingCard(prev => ({ ...prev, extra_images: updatedExtraPhotos }));
+      event.target.value = '';
+    } catch (error) {
+      console.error(error);
+      alert("Erro ao enviar fotos extras: " + error.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleBulkImageUpload(event) {
+    const files = Array.from(event.target.files || []);
+    if (!files.length) return;
+
+    const emptyCards = filteredCards.filter(card => !card.img);
+    if (!emptyCards.length) {
+      alert('Não há slots vazios para receber estas fotos.');
+      event.target.value = '';
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const filesToUpload = files.slice(0, emptyCards.length);
+
+      for (let index = 0; index < filesToUpload.length; index += 1) {
+        const file = filesToUpload[index];
+        const targetCard = emptyCards[index];
+        const fileName = `${session.user.id}/bulk_${Date.now()}_${index}_${file.name}`;
+
+        const { error: uploadError } = await supabase.storage.from('cards').upload(fileName, file);
+        if (uploadError) throw uploadError;
+
+        const { data: { publicUrl } } = supabase.storage.from('cards').getPublicUrl(fileName);
+        const { error: dbError } = await supabase.from('collection').update({ image_url: publicUrl }).eq('id', targetCard.id);
+        if (dbError) throw dbError;
+
+        setCards(prev => prev.map(card => card.id === targetCard.id ? { ...card, img: publicUrl } : card));
+
+        if (editingCard && editingCard.id === targetCard.id) {
+          setEditingCard(prev => ({ ...prev, img: publicUrl }));
+        }
+      }
+
+      event.target.value = '';
+    } catch (error) {
+      console.error(error);
+      alert('Erro ao enviar imagens: ' + error.message);
     } finally {
       setLoading(false);
     }
@@ -496,6 +575,16 @@ export default function KpopCollection() {
             </div>
           )}
 
+          {/* BOTÃO DE UPLOAD EM LOTE PARA SLOTS VAZIOS */}
+          {filteredCards.some(card => !card.img) && (
+            <div className="flex justify-end mb-4">
+              <label className="cursor-pointer bg-gradient-to-r from-violet-600 to-purple-600 text-white px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wide shadow-md hover:from-violet-700 hover:to-purple-700 transition-all">
+                + adicionar várias
+                <input type="file" accept="image/*" multiple className="hidden" onChange={handleBulkImageUpload} />
+              </label>
+            </div>
+          )}
+
           {/* GRID DE PHOTOCARDS */}
           <div className="flex-1">
             {loading ? (
@@ -544,6 +633,30 @@ export default function KpopCollection() {
           <div className="bg-white rounded-xl w-full max-w-sm overflow-hidden relative p-4 space-y-4 max-h-[90vh] overflow-y-auto shadow-xl">
             <button onClick={() => setEditingCard(null)} className="absolute top-2 right-2 text-gray-400 hover:text-gray-600"><X size={24} /></button>
             <img src={editingCard.img} className="h-48 w-full object-contain mx-auto rounded-lg bg-gray-50" />
+
+            <div className="space-y-3">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Fotos extras</span>
+                <label className="cursor-pointer bg-gradient-to-r from-pink-500 to-rose-500 text-white px-3 py-2 rounded-xl text-[10px] font-black uppercase shadow-md hover:from-pink-600 hover:to-rose-600 transition-all">
+                  + adicionar várias
+                  <input type="file" accept="image/*" multiple className="hidden" onChange={handleExtraImagesUpload} />
+                </label>
+              </div>
+
+              <div className="grid grid-cols-3 gap-2">
+                {(editingCard.extra_images || []).length > 0 ? (
+                  (editingCard.extra_images || []).map((imgUrl, index) => (
+                    <a key={index} href={imgUrl} target="_blank" rel="noreferrer" className="block aspect-square rounded-lg overflow-hidden border border-gray-200 bg-gray-50">
+                      <img src={imgUrl} alt="" className="w-full h-full object-cover" />
+                    </a>
+                  ))
+                ) : (
+                  <div className="col-span-3 text-center text-[10px] text-gray-400 py-3 border border-dashed border-gray-200 rounded-lg">
+                    Nenhuma foto extra adicionada
+                  </div>
+                )}
+              </div>
+            </div>
 
             <div className="space-y-3">
               <div>
